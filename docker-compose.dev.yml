@@ -93,6 +93,9 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile.dev
+    # Nombre propio para la imagen de desarrollo. Sin esto, dev y producción
+    # comparten el nombre por defecto (banca-ai-api) y se pisan entre sí.
+    image: banca-api:dev
     container_name: banca-api-dev
     restart: unless-stopped
     depends_on:
@@ -156,6 +159,7 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile.dev
+    image: banca-web:dev
     container_name: banca-web-dev
     restart: unless-stopped
     depends_on:

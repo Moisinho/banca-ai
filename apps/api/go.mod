@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
+	github.com/tigerbeetle/tigerbeetle-go v0.17.9
 	golang.org/x/time v0.15.0
 )
 
