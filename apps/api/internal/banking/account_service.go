@@ -124,8 +124,13 @@ func (s *AccountService) PrimaryAccount(ctx context.Context, userID string) (dom
 	return accounts[0], nil
 }
 
-// resolveOwnedAccount busca una cuenta por número y verifica que sea del usuario.
-func (s *AccountService) resolveOwnedAccount(ctx context.Context, userID, accountNumber string) (domain.Account, error) {
+// FindOwnedByNumber busca una cuenta por su número y verifica que sea del
+// usuario.
+//
+// La usa el chat con IA cuando la persona nombra una cuenta concreta. Sin esta
+// comprobación, alguien podría pedirle a la IA el saldo de una cuenta ajena
+// dando su número.
+func (s *AccountService) FindOwnedByNumber(ctx context.Context, userID, accountNumber string) (domain.Account, error) {
 	account, err := s.accounts.FindByNumber(ctx, accountNumber)
 	if err != nil {
 		return domain.Account{}, err

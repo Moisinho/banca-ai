@@ -162,22 +162,5 @@ func (r TransferRequest) Validate() error {
 	return nil
 }
 
-// PendingTransfer es una operación esperando confirmación del usuario.
-type PendingTransfer struct {
-	ID          *big.Int
-	Type        TransactionType
-	Amount      Money
-	Currency    string
-	FromAccount string
-	ToAccount   string
-	Description string
-	ExpiresAt   time.Time
-}
-
-// Expired indica si la reserva ya venció.
-//
-// Una vez vencida, TigerBeetle libera los fondos y la transferencia no se
-// puede confirmar ni rechazar: dejó de existir como pendiente.
-func (p PendingTransfer) Expired() bool {
-	return time.Now().After(p.ExpiresAt)
-}
+// Las operaciones pendientes de confirmación viven en chat.go, junto al resto
+// del modelo de conversación: es el chat con IA quien las genera.

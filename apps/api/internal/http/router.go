@@ -13,6 +13,7 @@ import (
 
 	"github.com/Moisinho/banca-ai/apps/api/internal/auth"
 	"github.com/Moisinho/banca-ai/apps/api/internal/banking"
+	"github.com/Moisinho/banca-ai/apps/api/internal/chat"
 	"github.com/Moisinho/banca-ai/apps/api/internal/config"
 	"github.com/Moisinho/banca-ai/apps/api/internal/http/middleware"
 	"github.com/Moisinho/banca-ai/apps/api/internal/http/response"
@@ -24,6 +25,7 @@ type Dependencies struct {
 	TokenIssuer        *auth.TokenIssuer
 	AccountService     *banking.AccountService
 	TransactionService *banking.TransactionService
+	ChatService        *chat.Service
 }
 
 // NewRouter construye el router con todos los middlewares y rutas.
@@ -88,7 +90,8 @@ func NewRouter(cfg *config.Config, log *slog.Logger, deps Dependencies) http.Han
 			r.Route("/accounts", bankingHandler.AccountRoutes)
 			r.Route("/transactions", bankingHandler.TransactionRoutes)
 
-			// El chat con IA se monta en la fase siguiente.
+			chatHandler := NewChatHandler(deps.ChatService, log, cfg.AI.Enabled())
+			r.Route("/chat", chatHandler.Routes)
 		})
 	})
 

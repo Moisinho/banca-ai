@@ -96,12 +96,97 @@ func (s *TransactionService) Deposit(ctx context.Context, in DepositInput) (doma
 	}, nil
 }
 
+// DepositPending prepara un depósito a la espera de confirmación.
+//
+// Lo usa el chat con IA: el modelo propone la operación y el dinero no entra
+// hasta que la persona la aprueba en la interfaz.
+func (s *TransactionService) DepositPending(ctx context.Context, in DepositInput) (domain.Transaction, error) {
+	account, err := s.ownedAccount(ctx, in.UserID, in.AccountID)
+	if err != nil {
+		return domain.Transaction{}, err
+	}
+
+	if err := in.Amount.Validate(); err != nil {
+		return domain.Transaction{}, err
+	}
+
+	transferID, err := s.ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: operatorID(),
+		ToTigerBeetleID:   account.TigerBeetleID,
+		Amount:            in.Amount,
+		Type:              domain.TransactionTypeDeposit,
+		Pending:           true,
+		PendingTimeout:    DefaultPendingTimeout,
+	})
+	if err != nil {
+		return domain.Transaction{}, err
+	}
+
+	s.storeDescription(ctx, transferID, in.Description)
+
+	return domain.Transaction{
+		ID:          transferID,
+		Type:        domain.TransactionTypeDeposit,
+		Status:      domain.TransactionStatusPending,
+		Amount:      in.Amount,
+		Currency:    account.Currency,
+		FromAccount: domain.ExternalAccountNumber,
+		ToAccount:   account.AccountNumber,
+		Description: in.Description,
+		Direction:   domain.DirectionIn,
+		Timestamp:   time.Now(),
+	}, nil
+}
+
 // WithdrawInput son los datos de un retiro.
 type WithdrawInput struct {
 	UserID      string
 	AccountID   string
 	Amount      domain.Money
 	Description string
+}
+
+// WithdrawPending prepara un retiro a la espera de confirmación.
+//
+// Los fondos quedan reservados desde el momento de la propuesta: sin esa
+// reserva, la persona podría gastar el mismo dinero en otra operación mientras
+// decide, y la confirmación fallaría después.
+func (s *TransactionService) WithdrawPending(ctx context.Context, in WithdrawInput) (domain.Transaction, error) {
+	account, err := s.ownedAccount(ctx, in.UserID, in.AccountID)
+	if err != nil {
+		return domain.Transaction{}, err
+	}
+
+	if err := in.Amount.Validate(); err != nil {
+		return domain.Transaction{}, err
+	}
+
+	transferID, err := s.ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: account.TigerBeetleID,
+		ToTigerBeetleID:   operatorID(),
+		Amount:            in.Amount,
+		Type:              domain.TransactionTypeWithdrawal,
+		Pending:           true,
+		PendingTimeout:    DefaultPendingTimeout,
+	})
+	if err != nil {
+		return domain.Transaction{}, err
+	}
+
+	s.storeDescription(ctx, transferID, in.Description)
+
+	return domain.Transaction{
+		ID:          transferID,
+		Type:        domain.TransactionTypeWithdrawal,
+		Status:      domain.TransactionStatusPending,
+		Amount:      in.Amount,
+		Currency:    account.Currency,
+		FromAccount: account.AccountNumber,
+		ToAccount:   domain.ExternalAccountNumber,
+		Description: in.Description,
+		Direction:   domain.DirectionOut,
+		Timestamp:   time.Now(),
+	}, nil
 }
 
 // Withdraw saca dinero hacia fuera del banco.

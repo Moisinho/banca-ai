@@ -25,6 +25,7 @@ var (
 	ErrInvalidTransactionType = errors.New("el tipo de transacción no es válido")
 	ErrInvalidCursor          = errors.New("el cursor de paginación no es válido")
 	ErrInvalidLimit           = errors.New("el límite debe ser un número mayor a cero")
+	ErrEmptyMessage           = errors.New("el mensaje no puede estar vacío")
 	ErrInvalidDateRange       = errors.New("las fechas deben tener formato ISO 8601")
 
 	// Usuarios
@@ -57,6 +58,30 @@ var (
 	ErrNameRequired     = errors.New("el nombre es obligatorio")
 	ErrNameTooLong      = errors.New("el nombre es demasiado largo")
 )
+
+// Predicados sobre errores del dominio.
+//
+// Existen para que quien los consuma no tenga que importar "errors" ni conocer
+// las variables concretas: preguntan por la categoría, no por la instancia.
+
+func IsInsufficientFunds(err error) bool {
+	return errors.Is(err, ErrInsufficientFunds)
+}
+
+func IsAccountNotFound(err error) bool {
+	return errors.Is(err, ErrAccountNotFound)
+}
+
+func IsForbidden(err error) bool {
+	return errors.Is(err, ErrForbidden)
+}
+
+func IsInvalidAmount(err error) bool {
+	return errors.Is(err, ErrAmountNotPositive) ||
+		errors.Is(err, ErrAmountTooLarge) ||
+		errors.Is(err, ErrAmountFormat) ||
+		errors.Is(err, ErrAmountPrecision)
+}
 
 // ErrorCode traduce un error del dominio al código estable que consume el
 // frontend.

@@ -13,10 +13,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/mcp"
+	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/openrouter"
 	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/postgres"
 	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/tigerbeetle"
 	"github.com/Moisinho/banca-ai/apps/api/internal/auth"
 	"github.com/Moisinho/banca-ai/apps/api/internal/banking"
+	"github.com/Moisinho/banca-ai/apps/api/internal/chat"
 	"github.com/Moisinho/banca-ai/apps/api/internal/config"
 	httpapi "github.com/Moisinho/banca-ai/apps/api/internal/http"
 	"github.com/Moisinho/banca-ai/apps/api/internal/logger"
@@ -109,11 +112,24 @@ func run() error {
 	accountService := banking.NewAccountService(accountRepo, ledger, log)
 	transactionService := banking.NewTransactionService(accountRepo, ledger, metadataRepo, log)
 
+	// Chat con IA. El servidor MCP expone las operaciones bancarias como
+	// herramientas; el proveedor decide cuáles invocar.
+	chatRepo := postgres.NewChatMessageRepository(pool)
+	mcpServer := mcp.NewServer(accountService, transactionService, log)
+	aiProvider := openrouter.New(
+		cfg.AI.OpenRouterAPIKey,
+		cfg.AI.OpenRouterModel,
+		cfg.AI.OpenRouterBaseURL,
+		log,
+	)
+	chatService := chat.NewService(aiProvider, mcpServer, chatRepo, transactionService, accountService, log)
+
 	router := httpapi.NewRouter(cfg, log, httpapi.Dependencies{
 		AuthService:        authService,
 		TokenIssuer:        issuer,
 		AccountService:     accountService,
 		TransactionService: transactionService,
+		ChatService:        chatService,
 	})
 
 	// ---------------------------------------------------------------------------

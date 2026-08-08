@@ -130,6 +130,21 @@ type TransactionMetadataRepository interface {
 	GetMany(ctx context.Context, transferIDs []*big.Int) (map[string]string, error)
 }
 
+// ChatMessageRepository persiste la conversación con el asistente.
+type ChatMessageRepository interface {
+	Store(ctx context.Context, message domain.ChatMessage) (domain.ChatMessage, error)
+
+	// ListRecent devuelve los mensajes del usuario en orden cronológico,
+	// del más antiguo al más reciente, para reconstruir el hilo.
+	ListRecent(ctx context.Context, userID string, limit int) ([]domain.ChatMessage, error)
+
+	// FindByPendingTransfer busca el mensaje que propuso una operación.
+	FindByPendingTransfer(ctx context.Context, userID string, transferID *big.Int) (domain.ChatMessage, error)
+
+	// UpdateConfirmation marca una operación como confirmada o rechazada.
+	UpdateConfirmation(ctx context.Context, transferID *big.Int, status domain.ConfirmationStatus) error
+}
+
 // AIProvider es el modelo de lenguaje que atiende el chat.
 //
 // Está detrás de una interfaz para poder cambiar de proveedor sin tocar la
