@@ -1,0 +1,38 @@
+# Sin esto, Docker copia todo el directorio al contexto de build: además de
+# hacerlo lentísimo, los symlinks de pnpm dentro de node_modules rompen el
+# empaquetado del contexto.
+node_modules/
+**/node_modules/
+
+# Artefactos de build
+dist/
+build/
+**/tmp/
+apps/api/bin/
+
+# Entorno — los secretos nunca entran a una imagen
+.env
+.env.*
+!.env.example
+
+# Control de versiones y editores
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Datos locales de TigerBeetle
+*.tigerbeetle
+data/
+
+# Documentación y archivos de la prueba que no necesita el build
+*.md
+!README.md
+prueba-tecnica-hnl*.html
+opcion*.png
+
+# Herramientas internas
+.atl/
+graphify-out/
+coverage/
+*.log

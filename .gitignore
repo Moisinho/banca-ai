@@ -1,0 +1,42 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Builds
+dist/
+build/
+apps/api/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Entorno — nunca commitear secretos
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Datos de TigerBeetle (el archivo de datos se genera al formatear)
+*.tigerbeetle
+data/
+
+# Tests y cobertura
+coverage/
+*.out
+*.test
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editores y sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Herramientas internas
+.atl/
+graphify-out/
+CLAUDE.md

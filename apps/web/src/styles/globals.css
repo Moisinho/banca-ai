@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+/* ==============================================================================
+   Sistema de diseño de Banca AI
+
+   La paleta de marca y la paleta de gráficas son distintas a propósito:
+   los grises de la marca (violet-300 y slate-300) son indistinguibles entre sí
+   como series de datos, aunque funcionen bien como borde contra fondo.
+   ============================================================================== */
+
+@theme {
+  /* ---------------------------------------------------------------------------
+     Marca
+     --------------------------------------------------------------------------- */
+  --color-ink: #000500;
+  --color-violet-600: #473bf0;
+  --color-violet-500: #6665dd;
+  --color-violet-300: #9b9ece;
+  --color-slate-300: #acadbc;
+
+  /* Escala derivada del violeta principal, para superficies y estados. */
+  --color-violet-50: #f0efff;
+  --color-violet-100: #e0e0f7;
+  --color-violet-200: #b9b8ee;
+  --color-violet-400: #8c8ae4;
+  --color-violet-700: #3129a8;
+  --color-violet-800: #241d7a;
+
+  /* ---------------------------------------------------------------------------
+     Series de gráficas — validadas para daltonismo en claro y oscuro
+     --------------------------------------------------------------------------- */
+  --color-series-1: #473bf0;
+  --color-series-2: #00897b;
+  --color-series-3: #c06a12;
+  --color-series-4: #b0356b;
+
+  /* ---------------------------------------------------------------------------
+     Estados. Siempre acompañados de ícono y etiqueta, nunca sólo color.
+     --------------------------------------------------------------------------- */
+  --color-success: #00897b;
+  --color-warning: #c08a00;
+  --color-danger: #b3261e;
+
+  /* ---------------------------------------------------------------------------
+     Tipografía
+
+     Display: Bricolage Grotesque, tiene carácter propio.
+     Texto: Public Sans, neutra y muy legible.
+     Números: IBM Plex Mono. En banca los montos deben alinearse por el decimal
+     y no cambiar de ancho al actualizarse.
+     --------------------------------------------------------------------------- */
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
+
+  /* ---------------------------------------------------------------------------
+     Radios. Suaves pero no redondeados de más: en banca la precisión visual
+     comunica confianza.
+     --------------------------------------------------------------------------- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+}
+
+/* ==============================================================================
+   Superficies y texto — modo claro por defecto
+   ============================================================================== */
+:root {
+  color-scheme: light;
+
+  --surface-base: #fbfbfd;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f2f2f7;
+  --surface-inverse: var(--color-ink);
+
+  --border-subtle: #e6e6ef;
+  --border-default: var(--color-slate-300);
+  --border-strong: var(--color-violet-300);
+
+  --text-primary: var(--color-ink);
+  --text-secondary: #4a4a55;
+  --text-muted: #6f6f7d;
+  --text-inverse: #ffffff;
+  --text-accent: var(--color-violet-600);
+}
+
+/* Modo oscuro por preferencia del sistema.
+   El :not() permite que la elección explícita del usuario tenga prioridad. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface-base: #0a0a0f;
+    --surface-raised: #14141c;
+    --surface-sunken: #05050a;
+    --surface-inverse: #ffffff;
+
+    --border-subtle: #22222e;
+    --border-default: #33333f;
+    --border-strong: var(--color-violet-500);
+
+    --text-primary: #f5f5fa;
+    --text-secondary: #b4b4c2;
+    --text-muted: #85858f;
+    --text-inverse: var(--color-ink);
+    --text-accent: var(--color-violet-400);
+
+    /* Las series se re-escalonan para el fondo oscuro.
+       No es una inversión automática: cada tono se eligió y se validó. */
+    --color-series-1: #6665dd;
+    --color-series-2: #00a396;
+    --color-series-3: #d07e22;
+    --color-series-4: #d0568a;
+
+    --color-success: #00a396;
+    --color-warning: #d0a020;
+    --color-danger: #e0574c;
+  }
+}
+
+/* Modo oscuro elegido explícitamente por el usuario. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-base: #0a0a0f;
+  --surface-raised: #14141c;
+  --surface-sunken: #05050a;
+  --surface-inverse: #ffffff;
+
+  --border-subtle: #22222e;
+  --border-default: #33333f;
+  --border-strong: var(--color-violet-500);
+
+  --text-primary: #f5f5fa;
+  --text-secondary: #b4b4c2;
+  --text-muted: #85858f;
+  --text-inverse: var(--color-ink);
+  --text-accent: var(--color-violet-400);
+
+  --color-series-1: #6665dd;
+  --color-series-2: #00a396;
+  --color-series-3: #d07e22;
+  --color-series-4: #d0568a;
+
+  --color-success: #00a396;
+  --color-warning: #d0a020;
+  --color-danger: #e0574c;
+}
+
+/* ==============================================================================
+   Estilos base
+   ============================================================================== */
+* {
+  border-color: var(--border-subtle);
+}
+
+body {
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Clase utilitaria para montos.
+
+   tabular-nums hace que todos los dígitos ocupen el mismo ancho: sin esto,
+   un saldo que pasa de 1.111 a 8.888 "salta" visualmente al actualizarse.
+   En una tabla de transacciones los montos no alinearían por el decimal. */
+.amount {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.01em;
+}
+
+/* Foco visible y consistente en toda la aplicación.
+   Nunca quitar el outline sin poner un reemplazo: es la única guía para quien
+   navega con teclado. */
+:focus-visible {
+  outline: 2px solid var(--color-violet-600);
+  outline-offset: 2px;
+}
+
+/* Respeta la preferencia de movimiento reducido del sistema operativo. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

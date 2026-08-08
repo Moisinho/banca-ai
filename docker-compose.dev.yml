@@ -1,0 +1,187 @@
+# ==============================================================================
+# Banca AI — entorno de DESARROLLO con hot reload
+#
+# Levantar:
+#   docker compose -f docker-compose.dev.yml up
+#
+# Diferencias con el compose de producción:
+#   - El backend corre con Air: recompila solo al guardar un .go
+#   - El frontend corre con el dev server de Vite: HMR instantáneo en el browser
+#   - El código se monta como volumen, no se copia dentro de la imagen
+#   - Los puertos de Postgres y TigerBeetle quedan expuestos para inspección
+#
+# IMPORTANTE: este archivo NO es el entregable. El reclutador ejecuta
+# `docker compose up` con el docker-compose.yml normal.
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: banca-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-banca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-banca_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-banca}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-banca} -d ${POSTGRES_DB:-banca}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - banca-dev-net
+
+  tigerbeetle-init:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.9
+    container_name: banca-tigerbeetle-init-dev
+    security_opt:
+      - seccomp=unconfined
+    volumes:
+      - tigerbeetle-dev-data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /data/0_0.tigerbeetle ]; then
+          echo "El archivo de datos ya existe, no se reformatea."
+          exit 0
+        fi
+        echo "Formateando el archivo de datos de TigerBeetle..."
+        ./tigerbeetle format \
+          --cluster=${TIGERBEETLE_CLUSTER_ID:-0} \
+          --replica=0 \
+          --replica-count=1 \
+          --development \
+          /data/0_0.tigerbeetle
+    networks:
+      - banca-dev-net
+
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.9
+    container_name: banca-tigerbeetle-dev
+    restart: unless-stopped
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - IPC_LOCK
+    depends_on:
+      tigerbeetle-init:
+        condition: service_completed_successfully
+    volumes:
+      - tigerbeetle-dev-data:/data
+    ports:
+      - "3000:3000"
+    command:
+      - "start"
+      - "--addresses=0.0.0.0:3000"
+      - "--development"
+      - "/data/0_0.tigerbeetle"
+    networks:
+      - banca-dev-net
+
+  # ----------------------------------------------------------------------------
+  # Backend con hot reload.
+  #
+  # Al guardar cualquier .go, Air recompila y reinicia el proceso en ~2 segundos,
+  # sin rebuildear la imagen de Docker.
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    container_name: banca-api-dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tigerbeetle:
+        condition: service_started
+    environment:
+      ENV: development
+      API_PORT: 8080
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-banca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-banca_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-banca}
+      POSTGRES_SSLMODE: disable
+
+      TIGERBEETLE_CLUSTER_ID: ${TIGERBEETLE_CLUSTER_ID:-0}
+      TIGERBEETLE_ADDRESSES: tigerbeetle:3000
+
+      JWT_SECRET: ${JWT_SECRET:-secreto_solo_para_desarrollo_local}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-168h}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4.5}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+
+      RATE_LIMIT_GENERAL_RPM: ${RATE_LIMIT_GENERAL_RPM:-120}
+      RATE_LIMIT_AUTH_RPM: ${RATE_LIMIT_AUTH_RPM:-10}
+
+      SEED_ENABLED: ${SEED_ENABLED:-true}
+      SEED_USER_LIMIT: ${SEED_USER_LIMIT:-0}
+      SEED_BCRYPT_COST: ${SEED_BCRYPT_COST:-10}
+
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173}
+    ports:
+      - "8080:8080"
+    volumes:
+      # El código fuente se monta desde el host: Air ve tus cambios al instante.
+      - ./apps/api:/app
+      # Volumen anónimo para tmp/: el binario compilado se queda dentro del
+      # contenedor (Linux) y no contamina tu carpeta en Windows.
+      - /app/tmp
+      # Caché de módulos Go persistente entre reinicios: evita redescargar
+      # dependencias cada vez que levantás el entorno.
+      - go-mod-cache:/go/pkg/mod
+      - "./datos-prueba-HNL (1).json:/app/seed-data.json:ro"
+    networks:
+      - banca-dev-net
+
+  # ----------------------------------------------------------------------------
+  # Frontend con el dev server de Vite.
+  #
+  # HMR (Hot Module Replacement): al guardar un componente, el browser actualiza
+  # sólo esa parte sin recargar la página ni perder el estado.
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
+    container_name: banca-web-dev
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8080}
+      # En Docker sobre Windows el watcher nativo no detecta cambios del host.
+      # Con esto Vite usa polling, que sí funciona a través del bind mount.
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/web:/app
+      # Volumen anónimo para node_modules: los del contenedor (Linux) no deben
+      # ser pisados por los del host (Windows), porque hay binarios compilados
+      # por plataforma.
+      - /app/node_modules
+    networks:
+      - banca-dev-net
+
+volumes:
+  postgres-dev-data:
+  tigerbeetle-dev-data:
+  go-mod-cache:
+
+networks:
+  banca-dev-net:
+    driver: bridge

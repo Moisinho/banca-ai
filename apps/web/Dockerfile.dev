@@ -1,0 +1,27 @@
+# ==============================================================================
+# Frontend — imagen de DESARROLLO con hot reload
+#
+# Corre el dev server de Vite, que trae HMR: al guardar un componente el
+# browser actualiza sólo esa parte, sin recargar la página ni perder el estado
+# del formulario que estabas llenando.
+#
+# Esta imagen NO se usa en producción. Para eso está el Dockerfile normal.
+# ==============================================================================
+
+FROM node:22-alpine
+
+RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
+
+WORKDIR /app
+
+# Copiamos sólo los manifiestos para aprovechar la caché de capas de Docker.
+# Mientras no cambien las dependencias, esta capa se reutiliza.
+COPY apps/web/package.json apps/web/pnpm-lock.yaml* ./
+
+RUN pnpm install
+
+EXPOSE 5173
+
+# --host 0.0.0.0 es imprescindible: sin eso Vite escucha sólo en localhost
+# dentro del contenedor y no sería accesible desde tu máquina.
+CMD ["pnpm", "dev", "--host", "0.0.0.0"]

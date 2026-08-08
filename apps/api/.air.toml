@@ -1,0 +1,48 @@
+# Configuración de Air — recarga automática del backend en desarrollo.
+# Documentación: https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # CGO_ENABLED=1 es obligatorio: el cliente de TigerBeetle usa una librería nativa.
+  cmd = "CGO_ENABLED=1 go build -o ./tmp/api ./cmd/api"
+  bin = "./tmp/api"
+
+  # Extensiones que disparan una recompilación.
+  include_ext = ["go", "sql"]
+
+  # Directorios ignorados: recompilar por un cambio acá no tiene sentido.
+  exclude_dir = ["tmp", "vendor", "bin", "testdata"]
+
+  # Los archivos _test.go no deben disparar el rebuild del binario:
+  # los tests se corren aparte con `go test`.
+  exclude_regex = ["_test\\.go"]
+
+  # Espera antes de recompilar. Evita disparar varias veces seguidas cuando el
+  # editor guarda múltiples archivos de golpe.
+  delay = 300
+
+  # Docker sobre Windows no propaga los eventos del sistema de archivos a
+  # través de los bind mounts, así que fsnotify (lo que Air usa por defecto)
+  # nunca se entera de los cambios. El polling consulta activamente y es la
+  # única forma de que el hot reload funcione en este entorno.
+  poll = true
+  poll_interval = 500
+
+  # Si el build falla, Air deja el binario anterior corriendo en lugar de
+  # matar el proceso. Así un error de compilación no te tira la API.
+  stop_on_error = false
+
+  # Registra los errores de compilación para poder revisarlos.
+  log = "build-errors.log"
+
+[log]
+  time = true
+
+[misc]
+  # Limpia el binario temporal al salir.
+  clean_on_exit = true
+
+[screen]
+  clear_on_rebuild = true

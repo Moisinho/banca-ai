@@ -1,0 +1,199 @@
+# ==============================================================================
+# Banca AI — orquestación completa
+#
+# Levantar todo el sistema:
+#   docker compose up
+#
+# Servicios y orden de arranque:
+#   postgres          → base relacional (usuarios y autenticación)
+#   tigerbeetle-init  → formatea el archivo de datos (corre una vez y termina)
+#   tigerbeetle       → base financiera (cuentas, transferencias, saldos)
+#   api               → backend Go
+#   web               → frontend React servido por nginx
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL — usuarios, credenciales y metadatos de cuentas.
+  # No guarda saldos ni transacciones: de eso se encarga TigerBeetle.
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: banca-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-banca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-banca_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-banca}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # La API espera a que Postgres acepte conexiones antes de arrancar.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-banca} -d ${POSTGRES_DB:-banca}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - banca-net
+
+  # ----------------------------------------------------------------------------
+  # Inicialización de TigerBeetle.
+  #
+  # TigerBeetle guarda todo en un único archivo que hay que formatear antes del
+  # primer arranque. Este contenedor corre una sola vez: si el archivo ya existe
+  # no hace nada, porque volver a formatear borraría todos los datos.
+  # ----------------------------------------------------------------------------
+  tigerbeetle-init:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.9
+    container_name: banca-tigerbeetle-init
+    security_opt:
+      # TigerBeetle usa io_uring, que el perfil seccomp por defecto de Docker
+      # bloquea. Sin esto el proceso falla al arrancar.
+      - seccomp=unconfined
+    volumes:
+      - tigerbeetle-data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /data/0_0.tigerbeetle ]; then
+          echo "El archivo de datos ya existe, no se reformatea."
+          exit 0
+        fi
+        echo "Formateando el archivo de datos de TigerBeetle..."
+        ./tigerbeetle format \
+          --cluster=${TIGERBEETLE_CLUSTER_ID:-0} \
+          --replica=0 \
+          --replica-count=1 \
+          --development \
+          /data/0_0.tigerbeetle
+    networks:
+      - banca-net
+
+  # ----------------------------------------------------------------------------
+  # TigerBeetle — todas las operaciones financieras.
+  #
+  # El flag --development desactiva los chequeos estrictos de durabilidad de
+  # disco que TigerBeetle exige por defecto. En un contenedor no se pueden
+  # garantizar, así que sin este flag el servidor no arranca.
+  # Para producción real se usa un cluster de 6 réplicas sin este flag.
+  # ----------------------------------------------------------------------------
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.17.9
+    container_name: banca-tigerbeetle
+    restart: unless-stopped
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - IPC_LOCK
+    depends_on:
+      tigerbeetle-init:
+        condition: service_completed_successfully
+    volumes:
+      - tigerbeetle-data:/data
+    ports:
+      - "3000:3000"
+    command:
+      - "start"
+      - "--addresses=0.0.0.0:3000"
+      - "--development"
+      - "/data/0_0.tigerbeetle"
+    networks:
+      - banca-net
+
+  # ----------------------------------------------------------------------------
+  # Backend Go.
+  #
+  # Al arrancar corre las migraciones de Postgres, crea la cuenta del operador
+  # en TigerBeetle si no existe, y siembra los datos de prueba si SEED_ENABLED
+  # está en true y la base está vacía.
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: banca-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tigerbeetle:
+        condition: service_started
+    environment:
+      ENV: ${ENV:-development}
+      API_PORT: 8080
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-banca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-banca_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-banca}
+      POSTGRES_SSLMODE: disable
+
+      TIGERBEETLE_CLUSTER_ID: ${TIGERBEETLE_CLUSTER_ID:-0}
+      TIGERBEETLE_ADDRESSES: tigerbeetle:3000
+
+      JWT_SECRET: ${JWT_SECRET:-cambiame_por_un_secreto_largo_y_aleatorio_en_produccion}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-168h}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4.5}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+
+      RATE_LIMIT_GENERAL_RPM: ${RATE_LIMIT_GENERAL_RPM:-120}
+      RATE_LIMIT_AUTH_RPM: ${RATE_LIMIT_AUTH_RPM:-10}
+
+      SEED_ENABLED: ${SEED_ENABLED:-true}
+      SEED_USER_LIMIT: ${SEED_USER_LIMIT:-0}
+      SEED_BCRYPT_COST: ${SEED_BCRYPT_COST:-10}
+
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173}
+    ports:
+      - "8080:8080"
+    volumes:
+      # Los datos de prueba se montan como solo lectura: el seed los lee, no los toca.
+      - "./datos-prueba-HNL (1).json:/app/seed-data.json:ro"
+    healthcheck:
+      test: ["CMD", "/app/api", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - banca-net
+
+  # ----------------------------------------------------------------------------
+  # Frontend React, compilado y servido por nginx.
+  #
+  # Las variables VITE_* se inyectan en tiempo de build, no de ejecución:
+  # Vite las reemplaza literalmente en el bundle al compilar.
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8080}
+    container_name: banca-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+    networks:
+      - banca-net
+
+volumes:
+  postgres-data:
+    driver: local
+  tigerbeetle-data:
+    driver: local
+
+networks:
+  banca-net:
+    driver: bridge

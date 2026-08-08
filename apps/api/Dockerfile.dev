@@ -1,0 +1,31 @@
+# ==============================================================================
+# Backend Go — imagen de DESARROLLO con hot reload
+#
+# Usa Air (https://github.com/air-verse/air): vigila los archivos .go y
+# recompila automáticamente al guardar. El código fuente se monta como volumen
+# desde el host, así que no hace falta rebuildear la imagen en cada cambio.
+#
+# Esta imagen NO se usa en producción. Para eso está el Dockerfile normal.
+# ==============================================================================
+
+FROM golang:1.26-alpine
+
+# gcc y musl-dev: CGO, requerido por el cliente de TigerBeetle.
+# git: Air lo necesita para algunas operaciones internas.
+RUN apk add --no-cache gcc musl-dev git
+
+# Versión fijada a propósito: que una actualización de Air no rompa tu entorno
+# de trabajo en medio del desarrollo.
+RUN go install github.com/air-verse/air@v1.67.4
+
+WORKDIR /app
+
+# Precargamos las dependencias en la imagen. Al montar el código como volumen
+# esto evita que el primer arranque tenga que descargar todo el módulo de nuevo.
+COPY apps/api/go.mod apps/api/go.sum ./
+RUN go mod download
+
+EXPOSE 8080
+
+# Air lee su configuración de .air.toml
+CMD ["air", "-c", ".air.toml"]
