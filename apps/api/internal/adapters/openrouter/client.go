@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Moisinho/banca-ai/apps/api/internal/ports"
@@ -38,7 +39,35 @@ var (
 
 	// ErrInvalidAPIKey: la clave configurada no es válida.
 	ErrInvalidAPIKey = errors.New("la clave del proveedor de IA no es válida")
+
+	// ErrProviderOverloaded: el modelo está sin capacidad disponible.
+	//
+	// Habitual en los modelos gratuitos, que comparten cupo entre todos sus
+	// usuarios. Es transitorio, así que se reintenta.
+	ErrProviderOverloaded = errors.New("el proveedor de IA está saturado")
 )
+
+// isOverloadedMessage reconoce los mensajes de saturación del proveedor.
+//
+// OpenRouter los devuelve con estado 200 y el detalle en el cuerpo, así que no
+// alcanza con mirar el código HTTP.
+func isOverloadedMessage(message string) bool {
+	lowered := strings.ToLower(message)
+
+	for _, marker := range []string{
+		"resourceexhausted",
+		"request limit reached",
+		"overloaded",
+		"capacity",
+		"try again later",
+	} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // Client habla con la API de OpenRouter.
 type Client struct {
@@ -144,8 +173,61 @@ type chatResponse struct {
 // Implementación del puerto
 // ------------------------------------------------------------------------------
 
+// maxAttempts es cuántas veces se reintenta una petición al proveedor.
+//
+// Los modelos gratuitos comparten capacidad entre todos sus usuarios y
+// devuelven fallos de saturación con frecuencia. Son transitorios: un reintento
+// con espera suele resolverlos.
+const maxAttempts = 3
+
 // Complete envía la conversación al modelo y devuelve su respuesta.
+//
+// Reintenta los fallos transitorios (saturación del proveedor) con espera
+// creciente. Los fallos definitivos —clave inválida, sin créditos— se
+// devuelven de inmediato: reintentarlos sólo agregaría demora.
 func (c *Client) Complete(ctx context.Context, req ports.CompletionRequest) (ports.CompletionResponse, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		response, err := c.complete(ctx, req)
+		if err == nil {
+			return response, nil
+		}
+
+		lastErr = err
+
+		if !isRetryable(err) {
+			return ports.CompletionResponse{}, err
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		// Espera creciente: 1s, 2s. Le da tiempo al proveedor a liberar
+		// capacidad sin hacer esperar demasiado a la persona.
+		wait := time.Duration(attempt) * time.Second
+		c.log.Warn("el proveedor de IA está saturado, reintentando",
+			"intento", attempt,
+			"espera", wait.String(),
+		)
+
+		select {
+		case <-ctx.Done():
+			return ports.CompletionResponse{}, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+
+	return ports.CompletionResponse{}, lastErr
+}
+
+// isRetryable indica si vale la pena reintentar un fallo.
+func isRetryable(err error) bool {
+	return errors.Is(err, ErrProviderOverloaded) || errors.Is(err, ErrRateLimited)
+}
+
+func (c *Client) complete(ctx context.Context, req ports.CompletionRequest) (ports.CompletionResponse, error) {
 	payload := chatRequest{
 		Model:       c.model,
 		Messages:    toAPIMessages(req.Messages),
@@ -213,6 +295,11 @@ func (c *Client) Complete(ctx context.Context, req ports.CompletionRequest) (por
 
 	// OpenRouter puede devolver 200 con un error en el cuerpo.
 	if parsed.Error != nil {
+		// La saturación del proveedor llega así, y es transitoria: se reconoce
+		// por el mensaje para poder reintentarla.
+		if isOverloadedMessage(parsed.Error.Message) {
+			return ports.CompletionResponse{}, ErrProviderOverloaded
+		}
 		return ports.CompletionResponse{}, fmt.Errorf("el proveedor de IA devolvió un error: %s", parsed.Error.Message)
 	}
 

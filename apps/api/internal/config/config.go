@@ -111,7 +111,7 @@ func Load() (*Config, error) {
 
 		AI: AIConfig{
 			OpenRouterAPIKey:  getEnv("OPENROUTER_API_KEY", ""),
-			OpenRouterModel:   getEnv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5"),
+			OpenRouterModel:   getEnv("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"),
 			OpenRouterBaseURL: getEnv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
 		},
 

@@ -25,12 +25,25 @@ export type MoneyString = string;
 
 export type AccountType = "savings" | "checking" | "investment";
 
+/**
+ * An account as the API returns it, with its balances already resolved.
+ *
+ * The metadata lives in Postgres and the balances in TigerBeetle; the backend
+ * joins them so the client sees one object instead of coordinating two calls.
+ */
 export interface Account {
   id: string;
   accountNumber: string;
   accountType: AccountType;
   currency: string;
   createdAt: string;
+
+  /** Spendable right now: settled credits minus settled and reserved debits. */
+  available: MoneyString;
+  /** Settled balance, ignoring reservations. */
+  posted: MoneyString;
+  /** Reserved by operations awaiting confirmation. */
+  pending: MoneyString;
 }
 
 export interface AccountBalance {

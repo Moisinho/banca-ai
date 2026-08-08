@@ -141,7 +141,7 @@ services:
       BCRYPT_COST: ${BCRYPT_COST:-12}
 
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4.5}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
 
       RATE_LIMIT_GENERAL_RPM: ${RATE_LIMIT_GENERAL_RPM:-120}

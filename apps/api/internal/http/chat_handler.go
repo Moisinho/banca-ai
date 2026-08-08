@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"math/big"
@@ -246,9 +247,17 @@ func (h *ChatHandler) writeError(w http.ResponseWriter, r *http.Request, err err
 		response.Error(w, r, http.StatusServiceUnavailable,
 			"AI_QUOTA_EXCEEDED", "El asistente no está disponible: la cuenta del proveedor de IA no tiene créditos.")
 
-	case errors.Is(err, openrouter.ErrRateLimited):
-		response.Error(w, r, http.StatusTooManyRequests,
-			"AI_RATE_LIMITED", "El asistente está recibiendo muchas consultas. Esperá un momento e intentá de nuevo.")
+	case errors.Is(err, openrouter.ErrRateLimited),
+		errors.Is(err, openrouter.ErrProviderOverloaded):
+		response.Error(w, r, http.StatusServiceUnavailable,
+			"AI_OVERLOADED",
+			"El asistente está saturado en este momento. Esperá unos segundos e intentá de nuevo.")
+
+	// Una consulta que tardó demasiado. Se distingue de un fallo real para que
+	// la persona sepa que puede reintentar.
+	case errors.Is(err, context.DeadlineExceeded):
+		response.Error(w, r, http.StatusGatewayTimeout,
+			"AI_TIMEOUT", "El asistente tardó demasiado en responder. Intentá de nuevo.")
 
 	case errors.Is(err, openrouter.ErrInvalidAPIKey):
 		logger.FromContext(r.Context(), h.log).Error("la clave de OpenRouter no es válida")

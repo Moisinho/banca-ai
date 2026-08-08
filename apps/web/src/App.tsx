@@ -1,117 +1,70 @@
-import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+import { AppLayout } from "@/components/AppLayout";
+import { AuthProvider, useAuth } from "@/features/auth/AuthContext";
+import { LoginPage } from "@/features/auth/LoginPage";
+import { RegisterPage } from "@/features/auth/RegisterPage";
+import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { HistoryPage } from "@/features/transactions/HistoryPage";
+import { TransactionsPage } from "@/features/transactions/TransactionsPage";
 
-type HealthStatus = "checking" | "online" | "offline";
-
-/**
- * Provisional shell used to verify the dev environment end to end.
- * Replaced by the router and real screens in the frontend phase.
- */
 export default function App() {
-  const [status, setStatus] = useState<HealthStatus>("checking");
-  const [checkedAt, setCheckedAt] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function checkHealth() {
-      try {
-        const response = await fetch(`${API_URL}/health`);
-        if (cancelled) return;
-
-        if (response.ok) {
-          const body = (await response.json()) as { time?: string };
-          setStatus("online");
-          setCheckedAt(body.time ?? null);
-        } else {
-          setStatus("offline");
-        }
-      } catch {
-        if (!cancelled) setStatus("offline");
-      }
-    }
-
-    void checkHealth();
-    const timer = setInterval(() => void checkHealth(), 5000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
-
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <p
-          className="text-xs uppercase tracking-[0.2em] mb-3"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Entorno de desarrollo
-        </p>
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/ingresar" element={<PublicOnly><LoginPage /></PublicOnly>} />
+          <Route path="/registro" element={<PublicOnly><RegisterPage /></PublicOnly>} />
 
-        <h1
-          className="text-4xl mb-8"
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-          }}
-        >
-          Banca AI
-        </h1>
+          <Route element={<Protected><AppLayout /></Protected>}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/operaciones" element={<TransactionsPage />} />
+            <Route path="/movimientos" element={<HistoryPage />} />
+          </Route>
 
-        <div
-          className="rounded-lg border p-5"
-          style={{
-            backgroundColor: "var(--surface-raised)",
-            borderColor: "var(--border-subtle)",
-          }}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <span style={{ color: "var(--text-secondary)" }}>Estado de la API</span>
-            <StatusBadge status={status} />
-          </div>
-
-          <div
-            className="flex items-center justify-between pt-4 border-t"
-            style={{ borderColor: "var(--border-subtle)" }}
-          >
-            <span style={{ color: "var(--text-secondary)" }}>Saldo de ejemplo</span>
-            {/* Muestra la tipografía tabular que usamos para todos los montos. */}
-            <span className="amount text-2xl" style={{ color: "var(--text-primary)" }}>
-              32,354.53
-            </span>
-          </div>
-
-          {checkedAt && (
-            <p className="text-xs mt-4" style={{ color: "var(--text-muted)" }}>
-              Última verificación: {new Date(checkedAt).toLocaleTimeString("es")}
-            </p>
-          )}
-        </div>
-      </div>
-    </main>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 
-function StatusBadge({ status }: { status: HealthStatus }) {
-  const config = {
-    checking: { label: "Verificando", color: "var(--text-muted)", symbol: "○" },
-    online: { label: "En línea", color: "var(--color-success)", symbol: "●" },
-    offline: { label: "Sin conexión", color: "var(--color-danger)", symbol: "▲" },
-  }[status];
+/**
+ * Gate for authenticated routes.
+ *
+ * While the session is being restored it renders nothing rather than
+ * redirecting: without that wait, a page reload would bounce a logged-in
+ * person to the login screen before the refresh cookie was checked.
+ */
+function Protected({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
 
+  if (loading) return <FullPageLoader />;
+  if (!user) return <Navigate to="/ingresar" replace />;
+
+  return <>{children}</>;
+}
+
+/** Keeps a signed-in person out of the login and register screens. */
+function PublicOnly({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) return <FullPageLoader />;
+  if (user) return <Navigate to="/dashboard" replace />;
+
+  return <>{children}</>;
+}
+
+function FullPageLoader() {
   return (
-    // The symbol carries the state alongside colour, so the badge stays
-    // readable without relying on hue alone.
-    <span
-      className="inline-flex items-center gap-2 text-sm font-medium"
-      style={{ color: config.color }}
-    >
-      <span aria-hidden="true">{config.symbol}</span>
-      {config.label}
-    </span>
+    <div className="flex min-h-screen items-center justify-center">
+      <span
+        aria-label="Cargando"
+        role="status"
+        className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+        style={{ borderColor: "var(--color-violet-600)", borderTopColor: "transparent" }}
+      />
+    </div>
   );
 }

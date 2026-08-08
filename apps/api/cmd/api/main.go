@@ -141,10 +141,14 @@ func run() error {
 
 		// Timeouts explícitos. Sin ellos, una conexión lenta o maliciosa puede
 		// mantener recursos del servidor ocupados indefinidamente.
+		//
+		// WriteTimeout tiene que superar al timeout del chat: si el servidor
+		// cortara antes, el cliente perdería la conexión en lugar de recibir
+		// una respuesta de error que pueda mostrar.
 		ReadTimeout:       15 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)

@@ -19,6 +19,14 @@ import (
 	"github.com/Moisinho/banca-ai/apps/api/internal/http/response"
 )
 
+// chatTimeout es el límite de tiempo de una consulta al asistente.
+//
+// Más generoso que el del resto de la API porque el modelo puede encadenar
+// varias llamadas a herramientas antes de responder. Tiene que ser menor que
+// el WriteTimeout del servidor para que el cliente reciba el error en vez de
+// que se le corte la conexión.
+const chatTimeout = 90 * time.Second
+
 // Dependencies son los componentes que el router necesita para armar las rutas.
 type Dependencies struct {
 	AuthService        *auth.Service
@@ -47,6 +55,11 @@ func NewRouter(cfg *config.Config, log *slog.Logger, deps Dependencies) http.Han
 	r.Use(middleware.RequestLogger(log))
 
 	// Corta las peticiones que superen el tiempo límite.
+	//
+	// El chat queda fuera de este middleware y usa uno más largo: una consulta
+	// que invoca herramientas puede tardar bastante más que una petición
+	// bancaria normal, y cortarla a los 30s convierte una respuesta lenta en
+	// un error.
 	r.Use(chimw.Timeout(30 * time.Second))
 
 	r.Use(cors.Handler(cors.Options{
@@ -90,8 +103,14 @@ func NewRouter(cfg *config.Config, log *slog.Logger, deps Dependencies) http.Han
 			r.Route("/accounts", bankingHandler.AccountRoutes)
 			r.Route("/transactions", bankingHandler.TransactionRoutes)
 
-			chatHandler := NewChatHandler(deps.ChatService, log, cfg.AI.Enabled())
-			r.Route("/chat", chatHandler.Routes)
+			// El chat lleva su propio timeout: el modelo puede encadenar varias
+			// llamadas a herramientas antes de responder, y con el límite
+			// general de 30s una respuesta lenta se convertiría en un error.
+			r.Group(func(r chi.Router) {
+				r.Use(chimw.Timeout(chatTimeout))
+				chatHandler := NewChatHandler(deps.ChatService, log, cfg.AI.Enabled())
+				r.Route("/chat", chatHandler.Routes)
+			})
 		})
 	})
 
