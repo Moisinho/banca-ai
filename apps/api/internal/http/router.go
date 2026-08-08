@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/Moisinho/banca-ai/apps/api/internal/auth"
+	"github.com/Moisinho/banca-ai/apps/api/internal/banking"
 	"github.com/Moisinho/banca-ai/apps/api/internal/config"
 	"github.com/Moisinho/banca-ai/apps/api/internal/http/middleware"
 	"github.com/Moisinho/banca-ai/apps/api/internal/http/response"
@@ -19,8 +20,10 @@ import (
 
 // Dependencies son los componentes que el router necesita para armar las rutas.
 type Dependencies struct {
-	AuthService *auth.Service
-	TokenIssuer *auth.TokenIssuer
+	AuthService        *auth.Service
+	TokenIssuer        *auth.TokenIssuer
+	AccountService     *banking.AccountService
+	TransactionService *banking.TransactionService
 }
 
 // NewRouter construye el router con todos los middlewares y rutas.
@@ -45,10 +48,10 @@ func NewRouter(cfg *config.Config, log *slog.Logger, deps Dependencies) http.Han
 	r.Use(chimw.Timeout(30 * time.Second))
 
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSAllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Request-ID"},
+		AllowedOrigins: cfg.CORSAllowedOrigins,
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		ExposedHeaders: []string{"X-Request-ID"},
 		// Necesario para que el navegador envíe la cookie del refresh token.
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -80,7 +83,12 @@ func NewRouter(cfg *config.Config, log *slog.Logger, deps Dependencies) http.Han
 			r.Use(middleware.Authenticate(deps.TokenIssuer))
 
 			r.Get("/me", handleMe)
-			// Cuentas, transacciones y chat se montan en las fases siguientes.
+
+			bankingHandler := NewBankingHandler(deps.AccountService, deps.TransactionService, log)
+			r.Route("/accounts", bankingHandler.AccountRoutes)
+			r.Route("/transactions", bankingHandler.TransactionRoutes)
+
+			// El chat con IA se monta en la fase siguiente.
 		})
 	})
 

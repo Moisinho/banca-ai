@@ -23,6 +23,9 @@ var (
 	ErrTransferExpired        = errors.New("la transferencia expiró")
 	ErrTransferResolved       = errors.New("la transferencia ya fue confirmada o rechazada")
 	ErrInvalidTransactionType = errors.New("el tipo de transacción no es válido")
+	ErrInvalidCursor          = errors.New("el cursor de paginación no es válido")
+	ErrInvalidLimit           = errors.New("el límite debe ser un número mayor a cero")
+	ErrInvalidDateRange       = errors.New("las fechas deben tener formato ISO 8601")
 
 	// Usuarios
 	ErrUserNotFound       = errors.New("el usuario no existe")

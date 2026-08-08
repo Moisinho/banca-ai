@@ -88,6 +88,14 @@ type AccountRepository interface {
 
 	// NextAccountNumber genera un número de cuenta libre.
 	NextAccountNumber(ctx context.Context) (string, error)
+
+	// NumbersByTigerBeetleIDs traduce ids de TigerBeetle a números de cuenta
+	// legibles, en una sola consulta.
+	//
+	// Lo necesita el historial: TigerBeetle guarda ids numéricos, pero la
+	// persona quiere ver "4001-8143-0798-6257". La clave del mapa es el id en
+	// decimal; los ids que no estén en Postgres se omiten.
+	NumbersByTigerBeetleIDs(ctx context.Context, ids []*big.Int) (map[string]string, error)
 }
 
 // RefreshTokenRepository maneja los refresh tokens con rotación.

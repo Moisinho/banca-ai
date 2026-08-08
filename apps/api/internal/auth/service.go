@@ -17,13 +17,13 @@ import (
 
 // Service orquesta el registro, el inicio de sesión y la renovación de tokens.
 type Service struct {
-	users     ports.UserRepository
-	accounts  ports.AccountRepository
-	tokens    ports.RefreshTokenRepository
-	ledger    ports.Ledger
-	hasher    *Hasher
-	issuer    *TokenIssuer
-	log       *slog.Logger
+	users    ports.UserRepository
+	accounts ports.AccountRepository
+	tokens   ports.RefreshTokenRepository
+	ledger   ports.Ledger
+	hasher   *Hasher
+	issuer   *TokenIssuer
+	log      *slog.Logger
 }
 
 func NewService(

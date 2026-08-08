@@ -457,18 +457,22 @@ func transactionFromTransfer(t tb.Transfer, viewpoint tb.Uint128) (domain.Transa
 		status = domain.TransactionStatusVoided
 	}
 
+	// La contraparte es el lado opuesto al de la cuenta desde la que se mira.
 	direction := domain.DirectionIn
+	counterparty := t.DebitAccountID
 	if t.DebitAccountID == viewpoint {
 		direction = domain.DirectionOut
+		counterparty = t.CreditAccountID
 	}
 
 	return domain.Transaction{
-		ID:        t.ID.BigInt(),
-		Type:      domain.TransactionTypeFromCode(t.Code),
-		Status:    status,
-		Amount:    amount,
-		Currency:  "USD",
-		Direction: direction,
+		ID:             t.ID.BigInt(),
+		Type:           domain.TransactionTypeFromCode(t.Code),
+		Status:         status,
+		Amount:         amount,
+		Currency:       "USD",
+		Direction:      direction,
+		CounterpartyID: counterparty.BigInt(),
 		// TigerBeetle guarda el timestamp en nanosegundos desde el epoch.
 		Timestamp: time.Unix(0, int64(t.Timestamp)),
 	}, nil

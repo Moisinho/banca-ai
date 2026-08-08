@@ -16,6 +16,7 @@ import (
 	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/postgres"
 	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/tigerbeetle"
 	"github.com/Moisinho/banca-ai/apps/api/internal/auth"
+	"github.com/Moisinho/banca-ai/apps/api/internal/banking"
 	"github.com/Moisinho/banca-ai/apps/api/internal/config"
 	httpapi "github.com/Moisinho/banca-ai/apps/api/internal/http"
 	"github.com/Moisinho/banca-ai/apps/api/internal/logger"
@@ -99,15 +100,20 @@ func run() error {
 	userRepo := postgres.NewUserRepository(pool)
 	accountRepo := postgres.NewAccountRepository(pool)
 	refreshTokenRepo := postgres.NewRefreshTokenRepository(pool)
+	metadataRepo := postgres.NewTransactionMetadataRepository(pool)
 
 	hasher := auth.NewHasher(cfg.Auth.BcryptCost)
 	issuer := auth.NewTokenIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 
 	authService := auth.NewService(userRepo, accountRepo, refreshTokenRepo, ledger, hasher, issuer, log)
+	accountService := banking.NewAccountService(accountRepo, ledger, log)
+	transactionService := banking.NewTransactionService(accountRepo, ledger, metadataRepo, log)
 
 	router := httpapi.NewRouter(cfg, log, httpapi.Dependencies{
-		AuthService: authService,
-		TokenIssuer: issuer,
+		AuthService:        authService,
+		TokenIssuer:        issuer,
+		AccountService:     accountService,
+		TransactionService: transactionService,
 	})
 
 	// ---------------------------------------------------------------------------

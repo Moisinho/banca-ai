@@ -106,6 +106,13 @@ type Transaction struct {
 	Description string
 	Direction   Direction
 	Timestamp   time.Time
+
+	// CounterpartyID es el id en TigerBeetle de la otra cuenta involucrada.
+	//
+	// TigerBeetle sólo guarda ids numéricos, así que para mostrar el número de
+	// cuenta legible hay que buscarlo en Postgres. Este campo es interno: no
+	// se expone en la API.
+	CounterpartyID *big.Int
 }
 
 // TransferRequest describe una transferencia por ejecutar.

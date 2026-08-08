@@ -148,6 +148,21 @@ func (f *fakeAccountRepo) NextAccountNumber(_ context.Context) (string, error) {
 	return "4001-0000-0000-" + padLeft(f.counter), nil
 }
 
+func (f *fakeAccountRepo) NumbersByTigerBeetleIDs(_ context.Context, ids []*big.Int) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		for _, account := range f.accounts {
+			if account.TigerBeetleID != nil && account.TigerBeetleID.Cmp(id) == 0 {
+				out[id.String()] = account.AccountNumber
+			}
+		}
+	}
+	return out, nil
+}
+
 func padLeft(n int) string {
 	s := ""
 	for _, c := range []byte{byte('0' + (n/1000)%10), byte('0' + (n/100)%10), byte('0' + (n/10)%10), byte('0' + n%10)} {

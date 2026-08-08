@@ -15,14 +15,14 @@ import (
 // si falta algo, queremos enterarnos al inicio y no cuando un usuario
 // dispara la operación.
 type Config struct {
-	Env     string
-	Port    string
-	Postgres    PostgresConfig
-	TigerBeetle TigerBeetleConfig
-	Auth        AuthConfig
-	AI          AIConfig
-	RateLimit   RateLimitConfig
-	Seed        SeedConfig
+	Env                string
+	Port               string
+	Postgres           PostgresConfig
+	TigerBeetle        TigerBeetleConfig
+	Auth               AuthConfig
+	AI                 AIConfig
+	RateLimit          RateLimitConfig
+	Seed               SeedConfig
 	CORSAllowedOrigins []string
 }
 

@@ -170,6 +170,49 @@ func (r *AccountRepository) NextAccountNumber(ctx context.Context) (string, erro
 	return "", fmt.Errorf("no se pudo generar un número de cuenta libre tras %d intentos", maxAttempts)
 }
 
+// NumbersByTigerBeetleIDs traduce ids de TigerBeetle a números de cuenta.
+//
+// Una sola consulta para todos los ids: el historial necesita resolver la
+// contraparte de cada movimiento, y consultarlas de a una sería N+1.
+func (r *AccountRepository) NumbersByTigerBeetleIDs(ctx context.Context, ids []*big.Int) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+
+	numerics := make([]pgtype.Numeric, 0, len(ids))
+	for _, id := range ids {
+		numerics = append(numerics, numericFromBigInt(id))
+	}
+
+	const query = `
+		SELECT tigerbeetle_id, account_number
+		FROM accounts
+		WHERE tigerbeetle_id = ANY($1)
+	`
+
+	rows, err := r.pool.Query(ctx, query, numerics)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudieron resolver los números de cuenta: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var tigerBeetleID pgtype.Numeric
+		var accountNumber string
+
+		if err := rows.Scan(&tigerBeetleID, &accountNumber); err != nil {
+			return nil, fmt.Errorf("no se pudo leer un número de cuenta: %w", err)
+		}
+
+		if id := bigIntFromNumeric(tigerBeetleID); id != nil {
+			out[id.String()] = accountNumber
+		}
+	}
+
+	return out, rows.Err()
+}
+
 func (r *AccountRepository) queryOne(ctx context.Context, query string, arg any) (domain.Account, error) {
 	var account domain.Account
 	var tigerBeetleID pgtype.Numeric
