@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -14,9 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/postgres"
+	"github.com/Moisinho/banca-ai/apps/api/internal/adapters/tigerbeetle"
+	"github.com/Moisinho/banca-ai/apps/api/internal/auth"
 	"github.com/Moisinho/banca-ai/apps/api/internal/config"
-	"github.com/Moisinho/banca-ai/apps/api/internal/logger"
 	httpapi "github.com/Moisinho/banca-ai/apps/api/internal/http"
+	"github.com/Moisinho/banca-ai/apps/api/internal/logger"
 )
 
 // shutdownTimeout es el tiempo que damos a las peticiones en curso para
@@ -25,7 +27,6 @@ const shutdownTimeout = 15 * time.Second
 
 func main() {
 	// Modo healthcheck: lo usa Docker para saber si el contenedor está sano.
-	// Corre el chequeo, sale con 0 o 1, y termina.
 	healthcheck := flag.Bool("healthcheck", false, "verifica que la API responda y termina")
 	flag.Parse()
 
@@ -34,8 +35,8 @@ func main() {
 	}
 
 	if err := run(); err != nil {
-		// Todavía no hay logger configurado si falla la config, así que
-		// escribimos directo a stderr.
+		// Si la configuración falla todavía no hay logger, así que escribimos
+		// directo a stderr.
 		fmt.Fprintf(os.Stderr, "error fatal: %v\n", err)
 		os.Exit(1)
 	}
@@ -58,8 +59,60 @@ func run() error {
 		log.Warn("el chat con IA está deshabilitado: falta OPENROUTER_API_KEY")
 	}
 
-	router := httpapi.NewRouter(cfg, log)
+	// El contexto de arranque acota cuánto esperamos a las dependencias.
+	// Sin límite, un Postgres que nunca levanta dejaría el proceso colgado.
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelStartup()
 
+	// ---------------------------------------------------------------------------
+	// PostgreSQL — usuarios y autenticación
+	// ---------------------------------------------------------------------------
+	pool, err := postgres.Connect(startupCtx, postgres.DefaultConfig(cfg.Postgres.DSN()), log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := postgres.Migrate(startupCtx, pool, log); err != nil {
+		return err
+	}
+
+	// ---------------------------------------------------------------------------
+	// TigerBeetle — operaciones financieras
+	// ---------------------------------------------------------------------------
+	ledger, err := tigerbeetle.New(cfg.TigerBeetle.ClusterID, cfg.TigerBeetle.Addresses, log)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ledger.Close() }()
+
+	// La cuenta del operador representa al mundo exterior: es la contraparte de
+	// todo depósito y retiro. Sin ella no se puede mover dinero, así que se
+	// crea al arrancar.
+	if err := ledger.EnsureOperatorAccount(startupCtx); err != nil {
+		return err
+	}
+
+	// ---------------------------------------------------------------------------
+	// Composición de dependencias
+	// ---------------------------------------------------------------------------
+	userRepo := postgres.NewUserRepository(pool)
+	accountRepo := postgres.NewAccountRepository(pool)
+	refreshTokenRepo := postgres.NewRefreshTokenRepository(pool)
+
+	hasher := auth.NewHasher(cfg.Auth.BcryptCost)
+	issuer := auth.NewTokenIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
+
+	authService := auth.NewService(userRepo, accountRepo, refreshTokenRepo, ledger, hasher, issuer, log)
+
+	router := httpapi.NewRouter(cfg, log, httpapi.Dependencies{
+		AuthService: authService,
+		TokenIssuer: issuer,
+	})
+
+	// ---------------------------------------------------------------------------
+	// Servidor HTTP
+	// ---------------------------------------------------------------------------
 	srv := &http.Server{
 		Addr:    net.JoinHostPort("", cfg.Port),
 		Handler: router,
@@ -72,8 +125,6 @@ func run() error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// El servidor corre en su propia goroutine para que main pueda quedarse
-	// esperando la señal de apagado.
 	serverErrors := make(chan error, 1)
 	go func() {
 		log.Info("servidor HTTP escuchando", "addr", srv.Addr)
@@ -96,9 +147,9 @@ func run() error {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
-		// Shutdown deja terminar las peticiones en curso antes de cerrar.
-		// En una aplicación bancaria esto importa: cortar una transferencia
-		// a la mitad no es aceptable.
+		// Shutdown deja terminar las peticiones en curso antes de cerrar. En una
+		// aplicación bancaria esto importa: cortar una transferencia a la mitad
+		// no es aceptable.
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Error("el apagado ordenado falló, cerrando a la fuerza", "error", err)
 			_ = srv.Close()
@@ -132,6 +183,3 @@ func runHealthcheck() int {
 	}
 	return 0
 }
-
-// Verificación en tiempo de compilación de que slog está disponible.
-var _ = slog.LevelInfo

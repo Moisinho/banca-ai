@@ -30,7 +30,19 @@ var (
 	ErrInvalidCredentials = errors.New("credenciales inválidas")
 
 	// Autorización
-	ErrForbidden = errors.New("no tenés permiso sobre este recurso")
+	ErrForbidden    = errors.New("no tenés permiso sobre este recurso")
+	ErrUnauthorized = errors.New("necesitás iniciar sesión")
+
+	// Tokens de sesión
+	ErrTokenNotFound    = errors.New("el token no existe")
+	ErrTokenExpired     = errors.New("el token expiró")
+	ErrTokenRevoked     = errors.New("el token fue revocado")
+	ErrTokenAlreadyUsed = errors.New("el token ya fue utilizado")
+
+	// ErrTokenReuseDetected indica que se presentó un token ya consumido.
+	// Significa robo: el usuario legítimo ya lo canjeó, así que quien lo
+	// presenta ahora tiene una copia. Se revoca la familia completa.
+	ErrTokenReuseDetected = errors.New("se detectó reutilización de un token")
 
 	// Validación de datos de registro
 	ErrEmailRequired    = errors.New("el correo es obligatorio")
