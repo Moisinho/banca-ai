@@ -114,6 +114,12 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    # Nombre propio para la imagen de producción. Sin esto, Compose la nombra
+    # a partir de la carpeta del proyecto (banca-ai-api), que es el mismo
+    # patrón que puede terminar mezclado con una build hecha sin -f contra
+    # este archivo, dejando el contenedor de producción corriendo el binario
+    # de desarrollo (Air) por error.
+    image: banca-api:latest
     container_name: banca-api
     restart: unless-stopped
     depends_on:
@@ -179,6 +185,9 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
         VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8080}
+    # Mismo motivo que en el servicio api: nombre propio para no depender del
+    # nombre de carpeta del proyecto.
+    image: banca-web:latest
     container_name: banca-web
     restart: unless-stopped
     depends_on:

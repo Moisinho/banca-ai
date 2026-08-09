@@ -51,7 +51,13 @@ RUN addgroup -g 1001 -S banca && \
 WORKDIR /app
 
 COPY --from=builder /build/bin/api /app/api
-COPY --from=builder /build/migrations /app/migrations
+
+# Las migraciones NO se copian al filesystem del contenedor: postgres.go las
+# incrusta en el binario en tiempo de compilación con "go:embed all:migrations"
+# (ver internal/adapters/postgres/postgres.go), así que ya viajan dentro de
+# /app/api. Copiarlas aparte era vestigial y además apuntaba a una ruta que ya
+# no existe (apps/api/migrations en vez de
+# apps/api/internal/adapters/postgres/migrations), lo que rompía este build.
 
 USER banca
 
