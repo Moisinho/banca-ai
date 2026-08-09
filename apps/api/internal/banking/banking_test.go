@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,9 +133,11 @@ type ledgerAccount struct {
 }
 
 type pendingTransfer struct {
+	id       *big.Int
 	from     string
 	to       string
 	amount   domain.Money
+	txType   domain.TransactionType
 	resolved bool
 }
 
@@ -234,7 +237,9 @@ func (f *fakeLedger) Transfer(_ context.Context, req domain.TransferRequest) (*b
 	if req.Pending {
 		// Reserva: el disponible baja, pero el dinero todavía no se movió.
 		from.debitsPending += req.Amount
-		f.pending[id.String()] = &pendingTransfer{from: fromKey, to: toKey, amount: req.Amount}
+		f.pending[id.String()] = &pendingTransfer{
+			id: id, from: fromKey, to: toKey, amount: req.Amount, txType: req.Type,
+		}
 	} else {
 		from.debitsPosted += req.Amount
 		to.creditsPosted += req.Amount
@@ -283,6 +288,13 @@ func (f *fakeLedger) PostPending(_ context.Context, pendingID *big.Int) error {
 	f.balances[p.to].creditsPosted += p.amount
 	p.resolved = true
 
+	// Igual que TigerBeetle real: la confirmación es un registro NUEVO, con
+	// id propio, que referencia a la reserva por OriginalPendingID. No
+	// reemplaza a la reserva en el historial; el filtrado de cuál se muestra
+	// vive en el adaptador real (ledger.go), así que este fake simplemente
+	// modela los dos registros tal como existen en TigerBeetle.
+	f.appendResolution(p, domain.TransactionStatusCompleted)
+
 	return nil
 }
 
@@ -302,7 +314,33 @@ func (f *fakeLedger) VoidPending(_ context.Context, pendingID *big.Int) error {
 	f.balances[p.from].debitsPending -= p.amount
 	p.resolved = true
 
+	f.appendResolution(p, domain.TransactionStatusVoided)
+
 	return nil
+}
+
+// appendResolution agrega al historial el registro que confirma o cancela una
+// reserva, con un id nuevo y OriginalPendingID apuntando a la reserva.
+func (f *fakeLedger) appendResolution(p *pendingTransfer, status domain.TransactionStatus) {
+	f.nextID++
+	newID := big.NewInt(f.nextID)
+
+	tx := domain.Transaction{
+		ID:                newID,
+		Type:              p.txType,
+		Amount:            p.amount,
+		Timestamp:         time.Now(),
+		Status:            status,
+		OriginalPendingID: p.id,
+	}
+
+	outgoing := tx
+	outgoing.Direction = domain.DirectionOut
+	f.history[p.from] = append([]domain.Transaction{outgoing}, f.history[p.from]...)
+
+	incoming := tx
+	incoming.Direction = domain.DirectionIn
+	f.history[p.to] = append([]domain.Transaction{incoming}, f.history[p.to]...)
 }
 
 func (f *fakeLedger) ListTransfers(_ context.Context, id *big.Int, filter ports.TransferFilter) ([]domain.Transaction, error) {
@@ -310,6 +348,30 @@ func (f *fakeLedger) ListTransfers(_ context.Context, id *big.Int, filter ports.
 	defer f.mu.Unlock()
 
 	all := f.history[id.String()]
+
+	// Igual que el adaptador real: la reserva que ya fue confirmada o
+	// cancelada se omite, y sólo queda la fila que la resolvió. Ver la misma
+	// lógica y su comentario en ListTransfers de ledger.go.
+	resolved := make(map[string]bool)
+	for _, tx := range all {
+		if tx.OriginalPendingID != nil {
+			resolved[tx.OriginalPendingID.String()] = true
+		}
+	}
+
+	filtered := make([]domain.Transaction, 0, len(all))
+	for _, tx := range all {
+		if resolved[tx.ID.String()] {
+			continue
+		}
+		// La fila que CANCELA una reserva tampoco es un movimiento: el
+		// dinero nunca se movió. Ver el mismo comentario en ledger.go.
+		if tx.Status == domain.TransactionStatusVoided {
+			continue
+		}
+		filtered = append(filtered, tx)
+	}
+	all = filtered
 
 	limit := filter.Limit
 	if limit <= 0 {
@@ -896,6 +958,92 @@ func TestHistorialIncluyeLasDescripciones(t *testing.T) {
 	assert.Equal(t, account.AccountNumber, page.Items[0].ToAccount)
 }
 
+// El concepto de una operación en dos fases se guarda contra el id de la
+// RESERVA. Al confirmarse, TigerBeetle genera un id NUEVO para el registro de
+// confirmación, y el historial muestra esa fila (no la reserva, que queda
+// filtrada por TestLaOperacionConfirmadaApareceUnaSolaVez...). Sin resolver la
+// descripción con el id original, el concepto desaparecía del historial en
+// cuanto la persona confirmaba la operación.
+func TestElConceptoSobreviveAlConfirmarUnaOperacionPendiente(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	account := env.createAccount(t, userID)
+	_, err := env.transactions.Deposit(ctx, DepositInput{
+		UserID: userID, AccountID: account.ID, Amount: money(t, "1000.00"),
+	})
+	require.NoError(t, err)
+
+	pending, err := env.transactions.WithdrawPending(ctx, WithdrawInput{
+		UserID:      userID,
+		AccountID:   account.ID,
+		Amount:      money(t, "5.00"),
+		Description: "Compra de pollo",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, env.transactions.ConfirmPending(ctx, userID, pending.ID))
+
+	page, err := env.transactions.History(ctx, HistoryInput{
+		UserID: userID, AccountID: account.ID,
+	})
+	require.NoError(t, err)
+
+	// Sólo debe quedar una fila para este retiro, y con su concepto.
+	var encontrado *domain.Transaction
+	for i := range page.Items {
+		if page.Items[i].Amount == money(t, "5.00") {
+			encontrado = &page.Items[i]
+		}
+	}
+	require.NotNil(t, encontrado, "la operación confirmada debe aparecer en el historial")
+	assert.Equal(t, "Compra de pollo", encontrado.Description,
+		"el concepto no puede perderse al confirmar")
+	assert.Equal(t, domain.TransactionStatusCompleted, encontrado.Status)
+}
+
+// Una operación cancelada NO es un movimiento: el dinero nunca salió de la
+// cuenta, TigerBeetle sólo liberó la reserva. Antes de este fix, tanto la
+// reserva como el registro que la canceló quedaban filtrados de forma
+// asimétrica —la reserva sí se ocultaba, pero el registro del void quedaba
+// visible con signo negativo, como si fuera una transferencia real que nunca
+// ocurrió.
+func TestUnaOperacionCanceladaNoApareceEnElHistorial(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	userID := uuid.NewString()
+
+	account := env.createAccount(t, userID)
+	_, err := env.transactions.Deposit(ctx, DepositInput{
+		UserID: userID, AccountID: account.ID, Amount: money(t, "1000.00"),
+	})
+	require.NoError(t, err)
+
+	pending, err := env.transactions.WithdrawPending(ctx, WithdrawInput{
+		UserID: userID, AccountID: account.ID, Amount: money(t, "70.00"),
+		Description: "Transferencia de prueba",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, env.transactions.RejectPending(ctx, userID, pending.ID))
+
+	page, err := env.transactions.History(ctx, HistoryInput{
+		UserID: userID, AccountID: account.ID,
+	})
+	require.NoError(t, err)
+
+	for _, tx := range page.Items {
+		assert.NotEqual(t, money(t, "70.00"), tx.Amount,
+			"una operación cancelada no debe aparecer como movimiento en el historial")
+	}
+
+	// El saldo tampoco se movió: el único movimiento real es el depósito inicial.
+	saldo, err := env.accounts.GetBalance(ctx, userID, account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "1000.00", saldo.Available.String())
+}
+
 // El historial debe mostrar el número de cuenta de la otra parte.
 //
 // TigerBeetle sólo guarda ids numéricos, así que el número legible hay que
@@ -1020,6 +1168,82 @@ func TestExportarPDF(t *testing.T) {
 	assert.Contains(t, content, "%%EOF", "debe terminar con el marcador de fin")
 	assert.Contains(t, content, "/Type /Catalog")
 	assert.Contains(t, content, "xref")
+}
+
+func TestElCSVIncluyeElResumenDelPeriodo(t *testing.T) {
+	transactions := []domain.Transaction{
+		{
+			ID: big.NewInt(1), Type: domain.TransactionTypeDeposit,
+			Status: domain.TransactionStatusCompleted, Amount: money(t, "1000.00"),
+			Currency: "USD", Direction: domain.DirectionIn,
+			Timestamp: time.Date(2024, 3, 15, 10, 30, 0, 0, time.UTC),
+		},
+		{
+			ID: big.NewInt(2), Type: domain.TransactionTypeWithdrawal,
+			Status: domain.TransactionStatusCompleted, Amount: money(t, "250.50"),
+			Currency: "USD", Direction: domain.DirectionOut,
+			Timestamp: time.Date(2024, 3, 16, 14, 0, 0, 0, time.UTC),
+		},
+	}
+
+	content := string(mustExportCSV(t, transactions))
+
+	// Los totales se calculan una vez acá y no en la planilla de quien lo abre.
+	assert.Contains(t, content, "Total entradas,1000.00")
+	assert.Contains(t, content, "Total salidas,250.50")
+	assert.Contains(t, content, "Resultado neto,749.50")
+	assert.Contains(t, content, "Cuenta,4001-1234-5678-9012")
+}
+
+func TestElResultadoNetoNegativoLlevaSigno(t *testing.T) {
+	// Un período donde salió más de lo que entró cierra en negativo. Sin el
+	// signo, "250.50" se leería como una ganancia.
+	transactions := []domain.Transaction{
+		{
+			ID: big.NewInt(1), Type: domain.TransactionTypeWithdrawal,
+			Status: domain.TransactionStatusCompleted, Amount: money(t, "300.00"),
+			Currency: "USD", Direction: domain.DirectionOut,
+			Timestamp: time.Date(2024, 3, 16, 14, 0, 0, 0, time.UTC),
+		},
+	}
+
+	content := string(mustExportCSV(t, transactions))
+	assert.Contains(t, content, "Resultado neto,-300.00")
+}
+
+func TestElPDFSePaginaCuandoNoEntraEnUnaHoja(t *testing.T) {
+	// Antes el PDF era de una sola página y cortaba el historial con un aviso.
+	// Ahora continúa en hojas nuevas, cada una con su cabecera de tabla.
+	var transactions []domain.Transaction
+	for i := range 120 {
+		transactions = append(transactions, domain.Transaction{
+			ID: big.NewInt(int64(i + 1)), Type: domain.TransactionTypeTransfer,
+			Status: domain.TransactionStatusCompleted, Amount: money(t, "123.45"),
+			Currency: "USD", Description: "Pago a Muñoz", Direction: domain.DirectionOut,
+			Timestamp: time.Date(2024, 3, 15, 10, 30, 0, 0, time.UTC),
+		})
+	}
+
+	data, err := ExportPDF(transactions, "4001-1234-5678-9012", time.Now())
+	require.NoError(t, err)
+
+	content := string(data)
+
+	assert.Greater(t, strings.Count(content, "/Type /Page "), 1,
+		"120 movimientos no entran en una sola hoja")
+
+	// Cada objeto declarado debe tener su entrada en la tabla de referencias
+	// cruzadas, o el lector rechaza el archivo.
+	objects := strings.Count(content, " 0 obj")
+	entries := strings.Count(content[strings.Index(content, "xref"):], " 00000 n ")
+	assert.Equal(t, objects, entries, "el xref debe listar todos los objetos")
+}
+
+func mustExportCSV(t *testing.T, transactions []domain.Transaction) []byte {
+	t.Helper()
+	data, err := ExportCSV(transactions, "4001-1234-5678-9012")
+	require.NoError(t, err)
+	return data
 }
 
 func TestExportarHistorialVacioNoFalla(t *testing.T) {

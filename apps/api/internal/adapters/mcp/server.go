@@ -87,7 +87,7 @@ func (s *Server) MCPServer() *mcpsdk.Server { return s.server }
 type getBalanceArgs struct {
 	// Vacío significa la cuenta principal, que es lo habitual cuando alguien
 	// pregunta "¿cuánto dinero tengo?".
-	AccountNumber string `json:"accountNumber,omitempty" jsonschema:"Número de cuenta a consultar. Omitilo para usar la cuenta principal del usuario."`
+	AccountNumber string `json:"accountNumber,omitempty" jsonschema:"Número de cuenta a consultar. Omítalo para usar la cuenta principal del usuario."`
 }
 
 type listTransactionsArgs struct {
@@ -538,7 +538,7 @@ func proposalResult(p PendingOperation) *mcpsdk.CallToolResult {
 	}
 
 	sb.WriteString("\nEl dinero NO se ha movido todavía. ")
-	sb.WriteString("Informale al usuario los detalles y pedile que confirme o cancele en la interfaz.")
+	sb.WriteString("Informe al usuario los detalles y solicite que confirme o cancele en la interfaz.")
 
 	return textResult(sb.String())
 }
@@ -557,7 +557,7 @@ func userMessage(err error) string {
 	case domain.IsInvalidAmount(err):
 		return "El monto no es válido. Debe ser mayor a cero y tener como máximo dos decimales."
 	default:
-		return "No se pudo completar la operación. Intentalo de nuevo."
+		return "No se pudo completar la operación. Intente de nuevo."
 	}
 }
 

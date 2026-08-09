@@ -24,7 +24,7 @@ var requestIDKey = &contextKey{"request_id"}
 // New construye el logger según el entorno.
 //
 // En producción emite JSON, que es lo que consumen los agregadores de logs.
-// En desarrollo emite texto legible por humanos, porque lo vas a leer vos.
+// En desarrollo emite texto legible por humanos, porque lo lee una persona.
 func New(env string) *slog.Logger {
 	level := slog.LevelInfo
 	if env == "development" {
@@ -65,7 +65,7 @@ func RequestIDFrom(ctx context.Context) string {
 // FromContext devuelve un logger que incluye automáticamente el request_id.
 //
 // Con esto todos los logs de una misma petición quedan correlacionados: cuando
-// algo falla en producción, podés seguir el rastro completo de esa petición.
+// algo falla en producción, se puede seguir el rastro completo de esa petición.
 func FromContext(ctx context.Context, base *slog.Logger) *slog.Logger {
 	if id := RequestIDFrom(ctx); id != "" {
 		return base.With("request_id", id)

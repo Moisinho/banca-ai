@@ -122,7 +122,7 @@ func toTransactionResponse(t domain.Transaction) transactionResponse {
 func (h *BankingHandler) listAccounts(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *BankingHandler) listAccounts(w http.ResponseWriter, r *http.Request) {
 func (h *BankingHandler) getAccount(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -159,7 +159,7 @@ func (h *BankingHandler) getAccount(w http.ResponseWriter, r *http.Request) {
 func (h *BankingHandler) getBalance(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -186,7 +186,7 @@ func (h *BankingHandler) getBalance(w http.ResponseWriter, r *http.Request) {
 func (h *BankingHandler) getHistory(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -218,7 +218,7 @@ func (h *BankingHandler) getHistory(w http.ResponseWriter, r *http.Request) {
 func (h *BankingHandler) exportHistory(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -337,7 +337,7 @@ type depositRequest struct {
 func (h *BankingHandler) deposit(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -375,7 +375,7 @@ type withdrawRequest struct {
 func (h *BankingHandler) withdraw(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -414,7 +414,7 @@ type transferRequest struct {
 func (h *BankingHandler) transfer(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -455,7 +455,7 @@ func (h *BankingHandler) rejectPending(w http.ResponseWriter, r *http.Request) {
 func (h *BankingHandler) resolvePending(w http.ResponseWriter, r *http.Request, confirm bool) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -495,7 +495,7 @@ func (h *BankingHandler) writeError(w http.ResponseWriter, r *http.Request, err 
 	switch {
 	case errors.Is(err, domain.ErrInsufficientFunds):
 		response.Error(w, r, http.StatusUnprocessableEntity, code,
-			"No tenés fondos suficientes para esta operación")
+			"No tiene fondos suficientes para esta operación")
 
 	case errors.Is(err, domain.ErrAccountNotFound):
 		response.Error(w, r, http.StatusNotFound, code, "La cuenta no existe")
@@ -507,7 +507,7 @@ func (h *BankingHandler) writeError(w http.ResponseWriter, r *http.Request, err 
 
 	case errors.Is(err, domain.ErrSameAccount):
 		response.Error(w, r, http.StatusUnprocessableEntity, code,
-			"No podés transferir dinero a la misma cuenta")
+			"No puede transferir dinero a la misma cuenta")
 
 	case errors.Is(err, domain.ErrTransferNotFound):
 		response.Error(w, r, http.StatusNotFound, code, "La operación no existe")

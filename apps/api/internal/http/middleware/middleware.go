@@ -200,7 +200,7 @@ func RateLimit(rpm int, log *slog.Logger) func(http.Handler) http.Handler {
 
 				w.Header().Set("Retry-After", "60")
 				response.Error(w, r, http.StatusTooManyRequests,
-					"RATE_LIMIT_EXCEEDED", "Demasiadas peticiones. Esperá un momento e intentá de nuevo.")
+					"RATE_LIMIT_EXCEEDED", "Demasiadas peticiones. Espere un momento e intente de nuevo.")
 				return
 			}
 

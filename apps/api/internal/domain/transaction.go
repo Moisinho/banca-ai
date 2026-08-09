@@ -128,6 +128,18 @@ type Transaction struct {
 	// cuenta legible hay que buscarlo en Postgres. Este campo es interno: no
 	// se expone en la API.
 	CounterpartyID *big.Int
+
+	// OriginalPendingID es el id de la reserva que esta fila confirmó o
+	// canceló, si corresponde.
+	//
+	// Cuando una operación en dos fases se resuelve, TigerBeetle genera un id
+	// NUEVO para el registro de confirmación/cancelación: no reutiliza el id
+	// de la reserva. La descripción, en cambio, se guardó contra el id de la
+	// reserva original (es el único que existe en el momento en que la
+	// persona escribe el concepto). Este campo es lo que permite recuperarla
+	// con el id correcto al armar el historial. Interno: no se expone en la
+	// API.
+	OriginalPendingID *big.Int
 }
 
 // TransferRequest describe una transferencia por ejecutar.

@@ -116,6 +116,58 @@ func (r *ChatMessageRepository) ListRecent(ctx context.Context, userID string, l
 	return messages, nil
 }
 
+// ListBefore devuelve los mensajes anteriores a uno dado, en orden cronológico.
+//
+// El cursor compara la pareja (created_at, id) y no sólo la fecha: un turno
+// guarda el mensaje del usuario y el del asistente casi a la vez, y si dos
+// comparten timestamp un cursor por fecha se saltaría uno o lo repetiría. La
+// comparación de tuplas que ofrece Postgres desempata por id de forma estable.
+//
+// El segundo valor de retorno indica si todavía quedan mensajes más antiguos.
+// Se resuelve pidiendo uno de más en lugar de con un COUNT aparte.
+func (r *ChatMessageRepository) ListBefore(ctx context.Context, userID, beforeID string, limit int) ([]domain.ChatMessage, bool, error) {
+	const query = `
+		SELECT id, user_id, role, content, pending_transfer_id, confirmation_status, created_at
+		FROM chat_messages
+		WHERE user_id = $1
+		  AND (created_at, id) < (
+			SELECT created_at, id FROM chat_messages WHERE id = $2 AND user_id = $1
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3
+	`
+
+	rows, err := r.pool.Query(ctx, query, userID, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("no se pudieron leer los mensajes anteriores: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []domain.ChatMessage
+	for rows.Next() {
+		message, err := scanChatMessage(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+
+	// Invierte para dejarlos del más antiguo al más reciente.
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, hasMore, nil
+}
+
 func (r *ChatMessageRepository) FindByPendingTransfer(ctx context.Context, userID string, transferID *big.Int) (domain.ChatMessage, error) {
 	const query = `
 		SELECT id, user_id, role, content, pending_transfer_id, confirmation_status, created_at

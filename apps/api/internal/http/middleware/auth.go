@@ -29,14 +29,14 @@ func Authenticate(issuer *auth.TokenIssuer) func(http.Handler) http.Handler {
 			token, ok := bearerToken(r)
 			if !ok {
 				response.Error(w, r, http.StatusUnauthorized,
-					"UNAUTHORIZED", "Necesitás iniciar sesión para acceder a este recurso")
+					"UNAUTHORIZED", "Necesita iniciar sesión para acceder a este recurso")
 				return
 			}
 
 			claims, err := issuer.ParseAccessToken(token)
 			if err != nil {
 				response.Error(w, r, http.StatusUnauthorized,
-					"UNAUTHORIZED", "Tu sesión expiró. Iniciá sesión de nuevo.")
+					"UNAUTHORIZED", "Su sesión expiró. Inicie sesión de nuevo.")
 				return
 			}
 

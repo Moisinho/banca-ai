@@ -4,14 +4,36 @@ Sistema de banca en línea con asistente conversacional. Permite consultar
 saldos, mover dinero y revisar movimientos, tanto por formularios como
 hablando en lenguaje natural con una IA.
 
+> ⚠️ **Antes de evaluar el chat con IA, lea la sección "Levantar el sistema"
+> de abajo**: hace falta una clave gratuita propia de OpenRouter. Sin ella el
+> resto del sistema funciona igual, pero el chat queda deshabilitado.
+
 ---
 
 ## Levantar el sistema
 
 ```bash
-cp .env.example .env      # completa OPENROUTER_API_KEY si quieres el chat con IA
+cp .env.example .env
 docker compose up
 ```
+
+**Para evaluar el chat con IA** (requisito obligatorio de la prueba, 20% de
+la nota) hace falta una `OPENROUTER_API_KEY` propia en `.env` — no viene
+incluida en el repositorio, porque publicar una clave sería una fuga de
+credenciales que cualquiera podría usar para gastar la cuota de otra persona.
+Conseguirla es gratis y toma un minuto:
+
+1. Cree una cuenta en [openrouter.ai](https://openrouter.ai).
+2. Genere una clave en [openrouter.ai/keys](https://openrouter.ai/keys).
+3. Péguela en `.env`: `OPENROUTER_API_KEY=sk-or-...`
+
+El modelo por defecto (`nvidia/nemotron-3-ultra-550b-a55b:free`) es gratuito:
+no hace falta cargar saldo ni cambiar ninguna otra variable. Es el mismo
+modelo con el que se probó todo el chat durante el desarrollo.
+
+Sin esa clave el sistema arranca y funciona igual —cuentas, transacciones,
+historial, exportar—; sólo el chat queda deshabilitado con un mensaje claro
+en vez de fallar.
 
 Eso es todo. Cuando termine:
 
@@ -34,7 +56,7 @@ Cualquier usuario del archivo de datos funciona. Por ejemplo:
 | `mjimenez@example.com` | `Miguel2024!` |
 | `paulamolina@mail.com` | `Paula2024!` |
 
-También podés crear una cuenta nueva desde la pantalla de registro: se te abre
+También puede crear una cuenta nueva desde la pantalla de registro: se le abre
 una cuenta bancaria automáticamente.
 
 ### Probar el chat
@@ -42,8 +64,8 @@ una cuenta bancaria automáticamente.
 Con `OPENROUTER_API_KEY` configurada, en el panel del dashboard:
 
 - *¿Cuánto dinero tengo?*
-- *Mostrame mis últimos movimientos*
-- *Transferí 100 a la cuenta 4001-XXXX-XXXX-XXXX*
+- *Muéstrame mis últimos movimientos*
+- *Transfiere 100 a la cuenta 4001-XXXX-XXXX-XXXX*
 
 La última prepara la operación pero **no la ejecuta**: aparece una tarjeta con
 los datos y hay que confirmarla. El modelo no puede mover dinero por su cuenta.
@@ -155,6 +177,15 @@ alguien pueda invocar salteándose la autenticación.
 movimientos. La confirmación llega por un endpoint HTTP autenticado que el
 modelo no puede invocar.
 
+**Una sola operación con dinero por turno.** Un modelo puede emitir la misma
+herramienta dos veces: dos llamadas en una misma vuelta, o una repetición en la
+siguiente porque no interpretó que ya estaba preparada. Como cada invocación
+reservaba fondos de verdad y la respuesta sólo transporta una operación
+pendiente, la reserva sobrante quedaba bloqueando dinero que la persona no veía
+ni podía resolver hasta que venciera. Ahora la segunda propuesta se rechaza
+antes de ejecutarse y se le informa al modelo, que puede explicarlo. El prompt
+lo pide además como regla, pero la garantía es el control en el código.
+
 ---
 
 ## Autenticación
@@ -214,14 +245,20 @@ Todas las rutas cuelgan de `/api/v1`. Las protegidas exigen
 | Método | Ruta | Descripción |
 |---|---|---|
 | `POST` | `/chat/messages` | Envía un mensaje al asistente |
-| `GET` | `/chat/messages` | Historial de la conversación |
+| `GET` | `/chat/messages?limit=&before=` | Historial de la conversación, por tramos |
 | `POST` | `/chat/operations/{id}/confirm` | Confirma lo que la IA propuso |
 | `POST` | `/chat/operations/{id}/reject` | Rechaza lo que la IA propuso |
+
+Sin `before`, el historial devuelve los mensajes más recientes. Con `before`
+—el id de un mensaje— devuelve los anteriores a ése. Es lo que permite que la
+conversación se cargue de a tramos según se sube, como en una aplicación de
+mensajería, en lugar de traer el hilo completo al abrir. La respuesta incluye
+`hasMore` para que la interfaz sepa cuándo dejar de pedir.
 
 ### Formato de errores
 
 ```json
-{ "error": { "code": "INSUFFICIENT_FUNDS", "message": "No tenés fondos suficientes" } }
+{ "error": { "code": "INSUFFICIENT_FUNDS", "message": "No tiene fondos suficientes" } }
 ```
 
 El `code` es un identificador estable que el cliente compara; el `message` es

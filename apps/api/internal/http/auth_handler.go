@@ -133,7 +133,7 @@ func (h *AuthHandler) refresh(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(refreshCookieName)
 	if err != nil {
 		response.Error(w, r, http.StatusUnauthorized,
-			"UNAUTHORIZED", "Tu sesión expiró. Iniciá sesión de nuevo.")
+			"UNAUTHORIZED", "Su sesión expiró. Inicie sesión de nuevo.")
 		return
 	}
 
@@ -180,8 +180,17 @@ func (h *AuthHandler) setRefreshCookie(w http.ResponseWriter, token string) {
 		HttpOnly: true,
 		// Secure exige HTTPS. En desarrollo se desactiva porque localhost va
 		// por HTTP y el navegador descartaría la cookie.
-		Secure:   h.secureCookie,
-		SameSite: http.SameSiteStrictMode,
+		Secure: h.secureCookie,
+		// Lax, no Strict: la API y el frontend viven en orígenes distintos
+		// (mismo host, puerto distinto — localhost:5173 contra localhost:8080),
+		// tanto en desarrollo como en la composición de producción de este
+		// repositorio. Con Strict el navegador no adjunta la cookie en el fetch
+		// que hace /auth/refresh al recargar la página, y la sesión se cerraba
+		// sola en cada F5. Lax sigue bloqueando el envío en peticiones
+		// cross-site iniciadas por un tercero (la protección real contra CSRF)
+		// y sólo permite navegación de nivel superior y peticiones same-site
+		// entre distintos puertos, que es exactamente este caso.
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int((168 * time.Hour).Seconds()),
 	})
 }
@@ -193,7 +202,8 @@ func (h *AuthHandler) clearRefreshCookie(w http.ResponseWriter) {
 		Path:     "/api/v1/auth",
 		HttpOnly: true,
 		Secure:   h.secureCookie,
-		SameSite: http.SameSiteStrictMode,
+		// Mismo motivo que en setRefreshCookie: ver ahí.
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 }
@@ -212,7 +222,7 @@ func (h *AuthHandler) writeAuthError(w http.ResponseWriter, r *http.Request, err
 		response.Error(w, r, http.StatusUnauthorized, code, "El correo o la contraseña no son correctos")
 
 	case errors.Is(err, domain.ErrUnauthorized):
-		response.Error(w, r, http.StatusUnauthorized, code, "Tu sesión expiró. Iniciá sesión de nuevo.")
+		response.Error(w, r, http.StatusUnauthorized, code, "Su sesión expiró. Inicie sesión de nuevo.")
 
 	case errors.Is(err, domain.ErrEmailRequired),
 		errors.Is(err, domain.ErrEmailInvalid),

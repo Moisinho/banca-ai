@@ -21,11 +21,12 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary: "bg-[var(--color-violet-600)] text-white hover:bg-[var(--color-violet-500)]",
+  primary:
+    "bg-[var(--color-violet-600)] text-white hover:bg-[var(--color-violet-500)] hover:shadow-[var(--shadow-md)]",
   secondary:
-    "bg-[var(--surface-sunken)] text-[var(--text-primary)] hover:bg-[var(--surface-raised)] border border-[var(--border-default)]",
+    "bg-[var(--surface-sunken)] text-[var(--text-primary)] hover:bg-[var(--surface-raised)] hover:border-[var(--border-strong)] border border-[var(--border-default)]",
   ghost: "bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-sunken)]",
-  danger: "bg-[var(--color-danger)] text-white hover:opacity-90",
+  danger: "bg-[var(--color-danger)] text-white hover:opacity-90 hover:shadow-[var(--shadow-md)]",
 };
 
 export function Button({
@@ -44,9 +45,16 @@ export function Button({
       disabled={disabled || loading}
       // Announces the busy state to screen readers, which cannot see a spinner.
       aria-busy={loading}
+      // active:translate-y gives the press a physical answer. It is the one
+      // moment where instant feedback matters more than smoothness, so the
+      // transition is deliberately the fastest in the system.
       className={`inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5
-        text-sm font-medium transition-colors
+        text-sm font-medium
+        transition-[background-color,border-color,box-shadow,transform,opacity]
+        duration-[var(--duration-fast)] ease-[var(--ease-standard)]
+        active:translate-y-[1px]
         disabled:opacity-50 disabled:cursor-not-allowed
+        disabled:hover:shadow-none disabled:active:translate-y-0
         ${buttonVariants[variant]} ${fullWidth ? "w-full" : ""} ${className}`}
       {...props}
     >
@@ -106,8 +114,14 @@ export function Input({
         // looks different.
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : hint ? hintId : undefined}
+        // The focus ring is drawn with box-shadow rather than outline so it can
+        // animate; :focus-visible in globals.css still covers keyboard users.
         className={`w-full rounded-md border px-3 py-2.5 text-sm outline-none
-          transition-colors
+          transition-[border-color,box-shadow,background-color]
+          duration-[var(--duration-base)] ease-[var(--ease-standard)]
+          hover:border-[var(--border-strong)]
+          focus:border-[var(--color-violet-600)]
+          focus:shadow-[0_0_0_3px_var(--color-violet-100)]
           ${numeric ? "amount" : ""} ${className}`}
         style={{
           backgroundColor: "var(--surface-raised)",
@@ -141,17 +155,25 @@ export function Card({
   children,
   className = "",
   padding = true,
+  /** Adds a hover lift. Only for cards that are actually interactive. */
+  interactive = false,
 }: {
   children: ReactNode;
   className?: string;
   padding?: boolean;
+  interactive?: boolean;
 }) {
   return (
     <div
-      className={`rounded-lg border ${padding ? "p-5" : ""} ${className}`}
+      className={`rounded-lg border ${padding ? "p-5" : ""} ${
+        // The lift is opt-in: a card that rises under the cursor but does
+        // nothing when clicked is a promise the interface does not keep.
+        interactive ? "lift" : ""
+      } ${className}`}
       style={{
         backgroundColor: "var(--surface-raised)",
         borderColor: "var(--border-subtle)",
+        boxShadow: "var(--shadow-sm)",
       }}
     >
       {children}
@@ -258,8 +280,11 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
-      <p className="mb-1 text-base font-medium" style={{ color: "var(--text-primary)" }}>
+    <div className="animate-fade-in flex flex-col items-center justify-center px-6 py-12 text-center">
+      <p
+        className="mb-1 text-base font-medium"
+        style={{ color: "var(--text-primary)", fontFamily: "var(--font-display)" }}
+      >
         {title}
       </p>
       {description && (
@@ -298,6 +323,76 @@ export function ErrorState({
 }
 
 // ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+
+/**
+ * Page-at-a-time navigation.
+ *
+ * Deliberately not "load more": that pattern keeps every page fetched so far in
+ * memory, so a thousand movements end up as a thousand rows in the DOM. Here
+ * only the current page exists at any moment.
+ *
+ * `canGoNext` comes from the API rather than a computed page count, because the
+ * cursor pagination the backend uses never reports a total.
+ */
+export function Pagination({
+  page,
+  canGoNext,
+  onPrevious,
+  onNext,
+  loading = false,
+  label = "Paginación",
+}: {
+  page: number;
+  canGoNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+  loading?: boolean;
+  label?: string;
+}) {
+  const canGoPrevious = page > 1;
+
+  // A single page needs no controls at all.
+  if (!canGoNext && !canGoPrevious) return null;
+
+  return (
+    <nav
+      aria-label={label}
+      className="flex items-center justify-between gap-4 px-5 py-3"
+    >
+      <Button
+        variant="ghost"
+        onClick={onPrevious}
+        disabled={!canGoPrevious || loading}
+        aria-label="Página anterior"
+      >
+        <span aria-hidden="true">←</span> Anterior
+      </Button>
+
+      {/* aria-live so screen readers hear the page change; the request is
+          asynchronous, so without it the move happens silently. */}
+      <span
+        aria-live="polite"
+        className="text-sm tabular-nums"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Página {page}
+      </span>
+
+      <Button
+        variant="ghost"
+        onClick={onNext}
+        disabled={!canGoNext || loading}
+        aria-label="Página siguiente"
+      >
+        Siguiente <span aria-hidden="true">→</span>
+      </Button>
+    </nav>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Skeleton
 // ---------------------------------------------------------------------------
 
@@ -311,8 +406,16 @@ export function Skeleton({ className = "" }: { className?: string }) {
   return (
     <div
       aria-hidden="true"
-      className={`animate-pulse rounded ${className}`}
-      style={{ backgroundColor: "var(--surface-sunken)" }}
+      // A sweeping highlight instead of a pulse: the movement travels in one
+      // direction, which reads as "loading" rather than "blinking".
+      className={`rounded ${className}`}
+      style={{
+        backgroundColor: "var(--surface-sunken)",
+        backgroundImage:
+          "linear-gradient(90deg, transparent 0%, var(--surface-raised) 50%, transparent 100%)",
+        backgroundSize: "200% 100%",
+        animation: "shimmer 1.4s var(--ease-standard) infinite",
+      }}
     />
   );
 }

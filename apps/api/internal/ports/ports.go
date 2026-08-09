@@ -138,6 +138,15 @@ type ChatMessageRepository interface {
 	// del más antiguo al más reciente, para reconstruir el hilo.
 	ListRecent(ctx context.Context, userID string, limit int) ([]domain.ChatMessage, error)
 
+	// ListBefore devuelve los mensajes anteriores a uno dado, también en orden
+	// cronológico.
+	//
+	// Es lo que permite cargar la conversación de a tramos según se sube, en
+	// lugar de traerla entera: un hilo largo pesaría megabytes y tardaría en
+	// pintarse. Devuelve además si quedan mensajes más antiguos, para que la
+	// interfaz sepa cuándo dejar de pedir.
+	ListBefore(ctx context.Context, userID, beforeID string, limit int) ([]domain.ChatMessage, bool, error)
+
 	// FindByPendingTransfer busca el mensaje que propuso una operación.
 	FindByPendingTransfer(ctx context.Context, userID string, transferID *big.Int) (domain.ChatMessage, error)
 

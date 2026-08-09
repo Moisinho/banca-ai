@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -98,6 +99,38 @@ func (f *fakeMessageRepo) ListRecent(_ context.Context, userID string, limit int
 		out = out[len(out)-limit:]
 	}
 	return out, nil
+}
+
+func (f *fakeMessageRepo) ListBefore(_ context.Context, userID, beforeID string, limit int) ([]domain.ChatMessage, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Posición del mensaje que sirve de cursor, dentro de los de este usuario.
+	var own []domain.ChatMessage
+	for _, m := range f.messages {
+		if m.UserID == userID {
+			own = append(own, m)
+		}
+	}
+
+	cut := -1
+	for i, m := range own {
+		if m.ID == beforeID {
+			cut = i
+			break
+		}
+	}
+	if cut <= 0 {
+		return nil, false, nil
+	}
+
+	older := own[:cut]
+	hasMore := len(older) > limit
+	if hasMore {
+		older = older[len(older)-limit:]
+	}
+
+	return older, hasMore, nil
 }
 
 func (f *fakeMessageRepo) FindByPendingTransfer(_ context.Context, userID string, transferID *big.Int) (domain.ChatMessage, error) {
@@ -519,7 +552,7 @@ func TestElRetiroSinFondosNoGeneraPropuesta(t *testing.T) {
 				Arguments: map[string]any{"amount": "5000.00"},
 			}},
 		},
-		ports.CompletionResponse{Content: "No tenés fondos suficientes."},
+		ports.CompletionResponse{Content: "No tiene fondos suficientes."},
 	)
 
 	userID := uuid.NewString()
@@ -606,6 +639,130 @@ func TestElBucleDeHerramientasTieneLimite(t *testing.T) {
 		"no puede superar el límite de vueltas")
 }
 
+// ------------------------------------------------------------------------------
+// Una sola operación con dinero por turno
+//
+// El modelo puede emitir la misma herramienta dos veces —dos llamadas en una
+// misma vuelta, o una repetición en la vuelta siguiente porque no interpretó
+// que ya estaba hecha—. Cada invocación reservaba fondos de verdad en el
+// ledger, así que quedaban DOS transferencias pendientes y el usuario sólo veía
+// la última. La otra bloqueaba dinero y aparecía en el historial hasta vencer.
+// ------------------------------------------------------------------------------
+
+func TestDosLlamadasEnLaMismaVueltaReservanUnaSolaVez(t *testing.T) {
+	env := newTestEnv(t,
+		ports.CompletionResponse{
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:   "call-1",
+					Name: "withdraw",
+					Arguments: map[string]any{
+						"amount":      "100.00",
+						"description": "Retiro",
+					},
+				},
+				{
+					ID:   "call-2",
+					Name: "withdraw",
+					Arguments: map[string]any{
+						"amount":      "100.00",
+						"description": "Retiro",
+					},
+				},
+			},
+		},
+		ports.CompletionResponse{Content: "Preparé un retiro de 100.00 USD."},
+	)
+
+	userID := uuid.NewString()
+	cuenta := env.createFundedAccount(t, userID, "1000.00")
+
+	ctx := context.Background()
+	reply, err := env.service.Send(ctx, userID, "Retirá 100")
+	require.NoError(t, err)
+
+	require.NotNil(t, reply.PendingOperation)
+
+	// Sólo un retiro debe haber reservado fondos: 100, no 200.
+	saldo, err := env.accounts.GetBalance(ctx, userID, cuenta.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "100.00", saldo.Pending.String(),
+		"una segunda llamada en la misma vuelta no puede reservar fondos otra vez")
+	assert.Equal(t, "900.00", saldo.Available.String())
+}
+
+func TestUnaRepeticionEnOtraVueltaNoReservaDeNuevo(t *testing.T) {
+	// El modelo pide el retiro, recibe el resultado, y lo vuelve a pedir en la
+	// vuelta siguiente antes de dar su respuesta final.
+	call := ports.ToolCall{
+		ID:   "call-1",
+		Name: "withdraw",
+		Arguments: map[string]any{
+			"amount":      "250.00",
+			"description": "Retiro",
+		},
+	}
+
+	env := newTestEnv(t,
+		ports.CompletionResponse{ToolCalls: []ports.ToolCall{call}},
+		ports.CompletionResponse{ToolCalls: []ports.ToolCall{call}},
+		ports.CompletionResponse{Content: "Preparé un retiro de 250.00 USD."},
+	)
+
+	userID := uuid.NewString()
+	cuenta := env.createFundedAccount(t, userID, "1000.00")
+
+	ctx := context.Background()
+	reply, err := env.service.Send(ctx, userID, "Retirá 250")
+	require.NoError(t, err)
+
+	require.NotNil(t, reply.PendingOperation)
+
+	saldo, err := env.accounts.GetBalance(ctx, userID, cuenta.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "250.00", saldo.Pending.String(),
+		"repetir la herramienta en otra vuelta no puede duplicar la reserva")
+	assert.Equal(t, "750.00", saldo.Available.String())
+}
+
+func TestLaOperacionQueSeDevuelveEsLaQueSeReservo(t *testing.T) {
+	// Si el modelo propone dos operaciones distintas, la que ve el usuario tiene
+	// que ser exactamente la que tiene los fondos reservados.
+	env := newTestEnv(t,
+		ports.CompletionResponse{
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call-1",
+					Name:      "withdraw",
+					Arguments: map[string]any{"amount": "100.00"},
+				},
+				{
+					ID:        "call-2",
+					Name:      "withdraw",
+					Arguments: map[string]any{"amount": "500.00"},
+				},
+			},
+		},
+		ports.CompletionResponse{Content: "Listo."},
+	)
+
+	userID := uuid.NewString()
+	cuenta := env.createFundedAccount(t, userID, "1000.00")
+
+	ctx := context.Background()
+	reply, err := env.service.Send(ctx, userID, "Retirá 100")
+	require.NoError(t, err)
+
+	require.NotNil(t, reply.PendingOperation)
+	assert.Equal(t, "100.00", reply.PendingOperation.Amount.String(),
+		"se conserva la primera propuesta, que es la que reservó fondos")
+
+	saldo, err := env.accounts.GetBalance(ctx, userID, cuenta.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "100.00", saldo.Pending.String(),
+		"lo reservado debe coincidir con lo que se le muestra al usuario")
+}
+
 func TestElHistorialDevuelveLaConversacion(t *testing.T) {
 	env := newTestEnv(t,
 		ports.CompletionResponse{Content: "Primera respuesta."},
@@ -655,4 +812,81 @@ func TestElHistorialEsPrivadoPorUsuario(t *testing.T) {
 	history, err := env.service.History(ctx, miguel, 50)
 	require.NoError(t, err)
 	assert.Empty(t, history, "la conversación de cada persona es privada")
+}
+
+// ------------------------------------------------------------------------------
+// Carga incremental de la conversación
+//
+// La interfaz trae sólo los mensajes recientes y pide los anteriores a medida
+// que la persona sube, como en una aplicación de mensajería. Traer el hilo
+// entero de entrada haría que una conversación larga tardara en pintarse.
+// ------------------------------------------------------------------------------
+
+func TestElHistorialAnteriorDevuelveLosMensajesMasViejos(t *testing.T) {
+	responses := make([]ports.CompletionResponse, 6)
+	for i := range responses {
+		responses[i] = ports.CompletionResponse{Content: "Respuesta."}
+	}
+
+	env := newTestEnv(t, responses...)
+
+	userID := uuid.NewString()
+	env.createFundedAccount(t, userID, "")
+	ctx := context.Background()
+
+	// Seis turnos: doce mensajes en total (usuario + asistente).
+	for i := range 6 {
+		_, err := env.service.Send(ctx, userID, "Consulta "+strconv.Itoa(i))
+		require.NoError(t, err)
+	}
+
+	// La interfaz arranca con los cuatro más recientes.
+	recientes, err := env.service.History(ctx, userID, 4)
+	require.NoError(t, err)
+	require.Len(t, recientes, 4)
+
+	// Al subir, pide los anteriores al primero que tiene en pantalla.
+	anteriores, hasMore, err := env.service.HistoryBefore(ctx, userID, recientes[0].ID, 4)
+	require.NoError(t, err)
+	require.Len(t, anteriores, 4)
+	assert.True(t, hasMore, "todavía quedan mensajes más antiguos")
+
+	// Siguen en orden cronológico y no se solapan con los que ya estaban.
+	assert.True(t, anteriores[len(anteriores)-1].CreatedAt.Before(recientes[0].CreatedAt) ||
+		anteriores[len(anteriores)-1].ID != recientes[0].ID,
+		"el tramo anterior no puede repetir el mensaje del cursor")
+
+	for _, viejo := range anteriores {
+		for _, reciente := range recientes {
+			assert.NotEqual(t, viejo.ID, reciente.ID, "ningún mensaje puede aparecer dos veces")
+		}
+	}
+}
+
+func TestAlLlegarAlPrincipioDelHiloNoHayMasMensajes(t *testing.T) {
+	env := newTestEnv(t, ports.CompletionResponse{Content: "Respuesta."})
+
+	userID := uuid.NewString()
+	env.createFundedAccount(t, userID, "")
+	ctx := context.Background()
+
+	_, err := env.service.Send(ctx, userID, "Única consulta")
+	require.NoError(t, err)
+
+	todos, err := env.service.History(ctx, userID, 50)
+	require.NoError(t, err)
+	require.NotEmpty(t, todos)
+
+	// Antes del primer mensaje no hay nada: la interfaz debe dejar de pedir.
+	anteriores, hasMore, err := env.service.HistoryBefore(ctx, userID, todos[0].ID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, anteriores)
+	assert.False(t, hasMore)
+}
+
+func TestPedirElHistorialAnteriorSinCursorEsUnError(t *testing.T) {
+	env := newTestEnv(t)
+
+	_, _, err := env.service.HistoryBefore(context.Background(), uuid.NewString(), "", 10)
+	assert.ErrorIs(t, err, domain.ErrInvalidCursor)
 }

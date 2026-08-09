@@ -71,6 +71,15 @@ interface RequestOptions {
  */
 let refreshInFlight: Promise<boolean> | null = null;
 
+/**
+ * Full session from the most recent successful refresh.
+ *
+ * `restore()` needs the user object, not just the access token that
+ * `refreshSession()` stores globally — this is how it gets it without firing
+ * a second request.
+ */
+let lastSession: AuthSession | null = null;
+
 async function refreshSession(): Promise<boolean> {
   refreshInFlight ??= (async () => {
     try {
@@ -83,6 +92,7 @@ async function refreshSession(): Promise<boolean> {
 
       const session = (await response.json()) as AuthSession;
       accessToken = session.accessToken;
+      lastSession = session;
       return true;
     } catch {
       return false;
@@ -123,7 +133,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
     accessToken = null;
     onSessionExpired();
-    throw new ApiError("UNAUTHORIZED", "Tu sesión expiró. Iniciá sesión de nuevo.", 401);
+    throw new ApiError("UNAUTHORIZED", "Su sesión expiró. Inicie sesión de nuevo.", 401);
   }
 
   if (!response.ok) {
@@ -195,22 +205,25 @@ export const auth = {
     }
   },
 
-  /** Restores a session from the refresh cookie on page load. */
+  /**
+   * Restores a session from the refresh cookie on page load.
+   *
+   * Goes through the same `refreshSession` dedup as everything else, instead
+   * of calling `/auth/refresh` on its own. In React 19's StrictMode dev
+   * double-mount, the effect that calls this fires twice in a row; two
+   * separate fetches here each consumed the (single-use, rotating) refresh
+   * token, so the first succeeded and the second landed on an already-burned
+   * token and looked like a stolen one — the session got logged out on
+   * reload. Routing through the shared in-flight promise means both callers
+   * await the same request instead of firing two.
+   */
   async restore(): Promise<AuthSession | null> {
-    try {
-      const response = await fetch(`${BASE}/auth/refresh`, {
-        method: "POST",
-        credentials: "include",
-      });
+    const refreshed = await refreshSession();
+    if (!refreshed) return null;
 
-      if (!response.ok) return null;
-
-      const session = (await response.json()) as AuthSession;
-      accessToken = session.accessToken;
-      return session;
-    } catch {
-      return null;
-    }
+    // refreshSession() only stores the access token; the caller needs the
+    // full session (with the user) to hydrate the UI.
+    return lastSession;
   },
 };
 
@@ -305,8 +318,21 @@ export const chat = {
     return request("/chat/messages", { method: "POST", body: { message } });
   },
 
-  history(limit = 50): Promise<{ messages: ChatMessage[] }> {
-    return request(`/chat/messages?limit=${limit}`);
+  /**
+   * Loads a slice of the conversation.
+   *
+   * Without `before` it returns the newest messages. With `before` it returns
+   * the ones older than that message, which is how the panel walks backwards
+   * through a long thread as the person scrolls up.
+   */
+  history(
+    limit = 50,
+    before?: string,
+  ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (before) query.set("before", before);
+
+    return request(`/chat/messages?${query}`);
   },
 
   confirm(transferId: string): Promise<{ message: string }> {

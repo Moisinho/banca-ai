@@ -155,8 +155,12 @@ CREATE TABLE chat_messages (
                OR confirmation_status IN ('pending', 'confirmed', 'rejected', 'expired'))
 );
 
+-- El id entra en el índice porque la paginación del chat ordena por
+-- (created_at DESC, id DESC): dos mensajes del mismo turno pueden compartir
+-- timestamp, y sin el desempate por id la página siguiente se saltaría uno o lo
+-- repetiría. Con el id en el índice, Postgres resuelve el recorrido sin ordenar.
 CREATE INDEX chat_messages_user_id_created_at_idx
-    ON chat_messages (user_id, created_at DESC);
+    ON chat_messages (user_id, created_at DESC, id DESC);
 
 -- Índice parcial: busca rápido las confirmaciones que siguen esperando respuesta.
 CREATE INDEX chat_messages_pending_idx

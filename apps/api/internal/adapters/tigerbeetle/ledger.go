@@ -511,12 +511,60 @@ func (l *Ledger) ListTransfers(ctx context.Context, tigerBeetleID *big.Int, filt
 		return nil, fmt.Errorf("no se pudo consultar el historial: %w", err)
 	}
 
+	// Una operación en dos fases queda en TigerBeetle como DOS transferencias
+	// con id distinto: la reserva (pending) y la que la resuelve (post o void),
+	// que referencia a la primera por PendingID. Sin este filtro, una
+	// transferencia confirmada aparecía dos veces en el historial —una vez
+	// como "pendiente" y otra vez como "completada"— con el mismo monto y
+	// concepto. El dinero nunca se duplicó (TigerBeetle sólo mueve el saldo
+	// una vez), pero la lista de movimientos sí mostraba el registro dos
+	// veces. Acá se recolectan los ids de las reservas ya resueltas para
+	// excluirlas: sólo se conserva la fila final con el estado correcto.
+	//
+	// La fila del void en sí se descarta más abajo, no acá: a diferencia de
+	// una confirmación (que SÍ es un movimiento real y debe quedar en el
+	// historial), cancelar una reserva no mueve dinero, así que ni la reserva
+	// ni el registro que la canceló pertenecen a la lista de movimientos.
+	//
+	// Límite conocido: el filtro sólo ve la página actual. Si la reserva y su
+	// resolución cayeran en páginas distintas, la reserva reaparecería sin
+	// filtrar. En la práctica no ocurre: DefaultPendingTimeout es de 5
+	// minutos, así que ambos registros quedan siempre adyacentes en el tiempo,
+	// y el historial ordena por tiempo descendente.
+	resolved := make(map[tb.Uint128]bool)
+	for _, t := range transfers {
+		flags := t.TransferFlags()
+		if flags.PostPendingTransfer || flags.VoidPendingTransfer {
+			resolved[t.PendingID] = true
+		}
+	}
+
 	accountID := tb.BigIntToUint128(tigerBeetleID)
 	out := make([]domain.Transaction, 0, len(transfers))
 	for _, t := range transfers {
 		// Los asientos técnicos de la siembra no son operaciones que la
 		// persona haya hecho: se ocultan del historial.
 		if domain.IsSeedAdjustment(t.Code) {
+			continue
+		}
+
+		// La reserva original ya fue resuelta: se omite y queda sólo la fila
+		// que la confirmó o canceló. Una operación pendiente que TODAVÍA
+		// espera confirmación no está en `resolved` y sigue mostrándose,
+		// que es justamente la información que el usuario necesita ver.
+		if resolved[t.ID] {
+			continue
+		}
+
+		flags := t.TransferFlags()
+
+		// El registro que CANCELA una reserva tampoco es un movimiento: el
+		// dinero nunca salió de la cuenta, TigerBeetle sólo liberó la
+		// reserva. Mostrarlo en el historial con signo, junto a depósitos y
+		// transferencias reales, hacía parecer que una operación rechazada
+		// había movido plata igual. El estado "cancelada" sigue visible en la
+		// tarjeta de confirmación del chat, que es donde tiene sentido.
+		if flags.VoidPendingTransfer {
 			continue
 		}
 
@@ -602,7 +650,7 @@ func transactionFromTransfer(t tb.Transfer, viewpoint tb.Uint128) (domain.Transa
 		counterparty = t.CreditAccountID
 	}
 
-	return domain.Transaction{
+	tx := domain.Transaction{
 		ID:             t.ID.BigInt(),
 		Type:           domain.TransactionTypeFromCode(t.Code),
 		Status:         status,
@@ -612,7 +660,16 @@ func transactionFromTransfer(t tb.Transfer, viewpoint tb.Uint128) (domain.Transa
 		CounterpartyID: counterparty.BigInt(),
 		// TigerBeetle guarda el timestamp en nanosegundos desde el epoch.
 		Timestamp: time.Unix(0, int64(t.Timestamp)),
-	}, nil
+	}
+
+	// Esta fila resuelve una reserva: la descripción vive contra el id de esa
+	// reserva, no contra el id nuevo que TigerBeetle le asignó a esta
+	// confirmación o cancelación.
+	if flags.PostPendingTransfer || flags.VoidPendingTransfer {
+		tx.OriginalPendingID = t.PendingID.BigInt()
+	}
+
+	return tx, nil
 }
 
 // translateTransferStatus convierte un código de TigerBeetle en un error del

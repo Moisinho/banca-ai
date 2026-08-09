@@ -34,8 +34,8 @@ var (
 	ErrInvalidCredentials = errors.New("credenciales inválidas")
 
 	// Autorización
-	ErrForbidden    = errors.New("no tenés permiso sobre este recurso")
-	ErrUnauthorized = errors.New("necesitás iniciar sesión")
+	ErrForbidden    = errors.New("no tiene permiso sobre este recurso")
+	ErrUnauthorized = errors.New("necesita iniciar sesión")
 
 	// Tokens de sesión
 	ErrTokenNotFound    = errors.New("el token no existe")

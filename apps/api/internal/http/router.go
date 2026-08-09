@@ -138,7 +138,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func handleMe(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 

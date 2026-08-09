@@ -151,7 +151,7 @@ describe("PendingOperationCard", () => {
     const { ApiError } = await import("@/lib/api");
 
     vi.mocked(chat.confirm).mockRejectedValue(
-      new ApiError("INSUFFICIENT_FUNDS", "No tenés fondos suficientes", 422),
+      new ApiError("INSUFFICIENT_FUNDS", "No tiene fondos suficientes", 422),
     );
 
     render(<PendingOperationCard operation={buildOperation()} onResolved={vi.fn()} />);

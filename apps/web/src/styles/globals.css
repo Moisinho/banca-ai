@@ -49,8 +49,8 @@
      Números: IBM Plex Mono. En banca los montos deben alinearse por el decimal
      y no cambiar de ancho al actualizarse.
      --------------------------------------------------------------------------- */
-  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Public Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
 
   /* ---------------------------------------------------------------------------
@@ -60,6 +60,30 @@
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
+
+  /* ---------------------------------------------------------------------------
+     Movimiento
+
+     Tres duraciones y dos curvas para toda la aplicación. Un catálogo corto es
+     lo que hace que las transiciones se sientan parte de un mismo sistema en
+     lugar de decisiones sueltas.
+
+     La curva `standard` tiene una salida larga: el movimiento arranca rápido y
+     frena de a poco, que es como se mueven las cosas físicas. `entrance` agrega
+     un leve rebase al final, sólo para elementos que aparecen.
+     --------------------------------------------------------------------------- */
+  --duration-fast: 120ms;
+  --duration-base: 220ms;
+  --duration-slow: 420ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-entrance: cubic-bezier(0.2, 0.9, 0.3, 1.1);
+
+  /* Sombras. Muy contenidas: en una interfaz financiera la profundidad separa
+     capas, no decora. */
+  --shadow-sm: 0 1px 2px rgb(0 5 0 / 0.04), 0 1px 3px rgb(0 5 0 / 0.06);
+  --shadow-md: 0 2px 4px rgb(0 5 0 / 0.04), 0 4px 12px rgb(0 5 0 / 0.08);
+  --shadow-lg: 0 8px 24px rgb(0 5 0 / 0.12), 0 2px 6px rgb(0 5 0 / 0.06);
 }
 
 /* ==============================================================================
@@ -162,6 +186,119 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Los títulos usan la display con tracking negativo.
+   Bricolage tiene bastante personalidad; apretada gana presencia sin gritar. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* ==============================================================================
+   Movimiento
+
+   Cada animación existe por una razón concreta:
+   - rise:  algo entró en la página y conviene notar de dónde vino.
+   - fade:  un cambio de estado que no debe robar atención.
+   - slide: un mensaje nuevo en la conversación.
+   - shimmer: una espera, para que el esqueleto no parezca contenido congelado.
+   ============================================================================== */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.animate-rise {
+  animation: rise var(--duration-slow) var(--ease-entrance) both;
+}
+
+.animate-fade-in {
+  animation: fade-in var(--duration-base) var(--ease-standard) both;
+}
+
+.animate-slide-in {
+  animation: slide-in var(--duration-base) var(--ease-entrance) both;
+}
+
+/* Escalona la entrada de una lista.
+   El retraso se corta a los ocho elementos: más allá, la última fila tardaría
+   tanto en aparecer que se leería como lentitud, no como elegancia. */
+.stagger > * {
+  animation: rise var(--duration-slow) var(--ease-entrance) both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(7) { animation-delay: 240ms; }
+.stagger > *:nth-child(n + 8) { animation-delay: 280ms; }
+
+/* Realce al pasar el cursor por una fila o tarjeta interactiva. */
+.interactive {
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard);
+}
+
+.interactive:hover {
+  background-color: var(--surface-sunken);
+}
+
+/* Elevación al pasar por encima. -1px alcanza: en banca, una tarjeta que salta
+   se siente inestable. */
+.lift {
+  transition:
+    transform var(--duration-base) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard);
+}
+
+.lift:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
+}
+
 /* Clase utilitaria para montos.
 
    tabular-nums hace que todos los dígitos ocupen el mismo ancho: sin esto,
@@ -182,13 +319,30 @@ body {
   outline-offset: 2px;
 }
 
-/* Respeta la preferencia de movimiento reducido del sistema operativo. */
+/* Respeta la preferencia de movimiento reducido del sistema operativo.
+   Para quien marca esta preferencia, el movimiento puede provocar mareo real.
+
+   Además de acortar las duraciones se anula el desplazamiento: una animación
+   que empieza en translateY(8px) y se corta a 0.01ms dejaría el elemento
+   visible pero corrido de lugar. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-rise,
+  .animate-slide-in,
+  .stagger > * {
+    animation: fade-in 0.01ms both !important;
+  }
+
+  .lift:hover {
+    transform: none;
   }
 }

@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { Button, EmptyState, Skeleton } from "@/components/ui";
 import { ApiError, chat } from "@/lib/api";
@@ -6,28 +13,59 @@ import type { ChatMessage } from "@/types/api";
 import { PendingOperationCard } from "./PendingOperationCard";
 
 /**
+ * How many messages load at a time.
+ *
+ * Small enough that the first paint is immediate, large enough that the panel
+ * does not ask for another page the moment it opens.
+ */
+const PAGE_SIZE = 20;
+
+/** Distance from the top, in pixels, that triggers loading older messages. */
+const LOAD_THRESHOLD = 80;
+
+/**
  * Conversational assistant panel.
  *
  * When the assistant proposes something that moves money, the reply carries a
  * pending operation and the panel renders a confirmation card. The money does
  * not move until the person presses Confirmar — the model cannot do it.
+ *
+ * Messages load the way a messaging app loads them: the newest arrive first,
+ * and older ones are fetched as the person scrolls up. A long conversation
+ * would otherwise mean fetching and rendering the entire thread on open.
  */
 export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasOlder, setHasOlder] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Scroll height captured just before older messages are prepended.
+   *
+   * Prepending content pushes everything down while the scroll offset stays
+   * put, so the view appears to jump backwards. Restoring the delta after the
+   * DOM updates keeps the message the person was reading exactly where it was.
+   */
+  const anchorHeight = useRef<number | null>(null);
+
+  /** Guards the initial auto-scroll so it only runs once per mount. */
+  const initialised = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
 
     chat
-      .history()
+      .history(PAGE_SIZE)
       .then((result) => {
-        if (!cancelled) setMessages(result.messages);
+        if (cancelled) return;
+        setMessages(result.messages);
+        setHasOlder(result.hasMore);
       })
       .catch(() => {
         // A conversation that fails to load is not worth blocking the panel:
@@ -42,13 +80,86 @@ export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () =>
     };
   }, []);
 
-  // Keeps the newest message in view as the conversation grows.
+  const loadOlder = useCallback(async () => {
+    const container = scrollRef.current;
+    const oldest = messages[0];
+
+    if (!container || !oldest || loadingOlder || !hasOlder) return;
+
+    setLoadingOlder(true);
+    anchorHeight.current = container.scrollHeight;
+
+    try {
+      const result = await chat.history(PAGE_SIZE, oldest.id);
+
+      setMessages((current) => {
+        // Ids already on screen are filtered out: a message arriving mid-fetch
+        // could otherwise appear twice and break React's key uniqueness.
+        const known = new Set(current.map((m) => m.id));
+        const fresh = result.messages.filter((m) => !known.has(m.id));
+        return [...fresh, ...current];
+      });
+      setHasOlder(result.hasMore);
+    } catch {
+      // Failing to load history is not worth an error banner: the conversation
+      // on screen still works, and the attempt repeats on the next scroll.
+      anchorHeight.current = null;
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [messages, loadingOlder, hasOlder]);
+
+  // Restores the reading position after older messages are prepended.
+  // useLayoutEffect, not useEffect: this must run before the browser paints,
+  // or the jump is visible.
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (!container || anchorHeight.current === null) return;
+
+    container.scrollTop = container.scrollHeight - anchorHeight.current;
+    anchorHeight.current = null;
+  }, [messages]);
+
+  // Keeps the newest message in view.
+  //
+  // Only when the person is already near the bottom: yanking the view down
+  // while they are reading older messages would undo their scrolling.
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages, sending]);
+    const container = scrollRef.current;
+    if (!container) return;
+
+    // Prepending older messages must not trigger this.
+    if (anchorHeight.current !== null) return;
+
+    // The very first render has an empty list — nothing has loaded yet — so
+    // there is nothing to scroll to. Marking `initialised` here was the bug:
+    // by the time the real messages arrived, the guard already believed the
+    // initial scroll had happened and skipped it, leaving the view at the
+    // top showing the oldest messages instead of the newest.
+    if (messages.length === 0) return;
+
+    if (!initialised.current) {
+      container.scrollTop = container.scrollHeight;
+      initialised.current = true;
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+
+    if (distanceFromBottom < 160) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    }
+  }, [messages, sending, loading]);
+
+  function handleScroll() {
+    const container = scrollRef.current;
+    if (!container) return;
+
+    if (container.scrollTop < LOAD_THRESHOLD && hasOlder && !loadingOlder) {
+      void loadOlder();
+    }
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -79,7 +190,7 @@ export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () =>
       setError(
         err instanceof ApiError
           ? err.message
-          : "No pudimos contactar al asistente. Intentá de nuevo.",
+          : "No pudimos contactar al asistente. Intente de nuevo.",
       );
       // The optimistic message is rolled back and the text returned to the box,
       // so nothing typed is lost.
@@ -110,15 +221,22 @@ export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () =>
         className="flex items-center justify-between border-b px-4 py-3"
         style={{ borderColor: "var(--border-subtle)" }}
       >
-        <h2 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+        <h2
+          className="text-sm font-semibold"
+          style={{ color: "var(--text-primary)", fontFamily: "var(--font-display)" }}
+        >
           Asistente
         </h2>
         <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-          Confirmás vos las operaciones
+          Usted confirma las operaciones
         </span>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 py-4"
+      >
         {loading ? (
           <div className="flex flex-col gap-3">
             <Skeleton className="h-12 w-3/4" />
@@ -127,11 +245,29 @@ export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () =>
           </div>
         ) : messages.length === 0 ? (
           <EmptyState
-            title="Preguntale lo que necesites"
-            description="Probá con «¿cuánto dinero tengo?», «mostrame mis últimos movimientos» o «transferí 100 a la cuenta 4001-...»."
+            title="Pregunte lo que necesite"
+            description="Pruebe con «¿cuánto dinero tengo?», «muéstrame mis últimos movimientos» o «transfiere 100 a la cuenta 4001-...»."
           />
         ) : (
           <div className="flex flex-col gap-4">
+            {/* Spinner at the top while older messages arrive, so the wait is
+                visible where the content will appear. */}
+            {loadingOlder && (
+              <div className="flex justify-center py-1">
+                <span
+                  aria-label="Cargando mensajes anteriores"
+                  className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                  style={{ borderColor: "var(--border-default)", borderTopColor: "transparent" }}
+                />
+              </div>
+            )}
+
+            {!hasOlder && messages.length > PAGE_SIZE && (
+              <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
+                Inicio de la conversación
+              </p>
+            )}
+
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -148,7 +284,7 @@ export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () =>
       {error && (
         <div
           role="alert"
-          className="mx-4 mb-2 rounded-md border px-3 py-2 text-sm"
+          className="animate-slide-in mx-4 mb-2 rounded-md border px-3 py-2 text-sm"
           style={{
             backgroundColor: "var(--surface-sunken)",
             borderColor: "var(--color-danger)",
@@ -168,10 +304,14 @@ export function ChatPanel({ onOperationResolved }: { onOperationResolved?: () =>
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Escribí tu consulta…"
+          placeholder="Escriba su consulta…"
           aria-label="Mensaje para el asistente"
           disabled={sending}
-          className="flex-1 rounded-md border px-3 py-2 text-sm outline-none"
+          className="flex-1 rounded-md border px-3 py-2 text-sm outline-none
+            transition-[border-color,box-shadow] duration-[var(--duration-base)]
+            ease-[var(--ease-standard)]
+            focus:border-[var(--color-violet-600)]
+            focus:shadow-[0_0_0_3px_var(--color-violet-100)]"
           style={{
             backgroundColor: "var(--surface-base)",
             borderColor: "var(--border-default)",
@@ -196,12 +336,17 @@ function MessageBubble({
   const isUser = message.role === "user";
 
   return (
-    <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+    <div className={`animate-slide-in flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       <div
         className="max-w-[85%] rounded-lg px-3.5 py-2.5 text-sm leading-relaxed"
         style={{
           backgroundColor: isUser ? "var(--color-violet-600)" : "var(--surface-sunken)",
           color: isUser ? "#ffffff" : "var(--text-primary)",
+          boxShadow: isUser ? "var(--shadow-sm)" : "none",
+          // Tail on the corner nearest the sender, the shape people read as
+          // "this side of the conversation".
+          borderBottomRightRadius: isUser ? "var(--radius-sm)" : undefined,
+          borderBottomLeftRadius: isUser ? undefined : "var(--radius-sm)",
         }}
       >
         {/* The model replies in markdown-ish prose; bold markers are stripped
@@ -223,7 +368,10 @@ function MessageBubble({
 
 function TypingIndicator() {
   return (
-    <div className="flex items-center gap-1.5 px-1" aria-label="El asistente está escribiendo">
+    <div
+      className="animate-fade-in flex items-center gap-1.5 px-1"
+      aria-label="El asistente está escribiendo"
+    >
       {[0, 1, 2].map((index) => (
         <span
           key={index}

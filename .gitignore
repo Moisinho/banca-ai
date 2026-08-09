@@ -10,6 +10,7 @@ apps/api/bin/
 *.dll
 *.so
 *.dylib
+*.tsbuildinfo
 
 # Entorno — nunca commitear secretos
 .env

@@ -23,9 +23,13 @@ export function AppLayout() {
   return (
     <div className="min-h-screen">
       <header
-        className="sticky top-0 z-10 border-b"
+        // The translucent background with a blur keeps the content visible as
+        // it scrolls under the bar, instead of disappearing behind a solid
+        // block. color-mix keeps it tied to the theme token rather than a
+        // hardcoded rgba that would break in dark mode.
+        className="sticky top-0 z-10 border-b backdrop-blur-md"
         style={{
-          backgroundColor: "var(--surface-base)",
+          backgroundColor: "color-mix(in srgb, var(--surface-base) 85%, transparent)",
           borderColor: "var(--border-subtle)",
         }}
       >
@@ -80,7 +84,7 @@ export function AppLayout() {
 
         {menuOpen && (
           <nav
-            className="border-t px-4 py-2 sm:hidden"
+            className="animate-slide-in border-t px-4 py-2 sm:hidden"
             style={{ borderColor: "var(--border-subtle)" }}
             aria-label="Navegación principal"
           >
@@ -121,13 +125,33 @@ function NavItem({
     <NavLink
       to={to}
       onClick={onClick}
-      className="rounded-md px-3 py-2 text-sm font-medium transition-colors"
+      className="relative rounded-md px-3 py-2 text-sm font-medium
+        transition-[color,background-color] duration-[var(--duration-fast)]
+        ease-[var(--ease-standard)]
+        hover:bg-[var(--surface-sunken)]"
       style={({ isActive }) => ({
         backgroundColor: isActive ? "var(--surface-sunken)" : "transparent",
         color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
       })}
     >
-      {label}
+      {({ isActive }) => (
+        <>
+          {label}
+          {/* An underline in the brand colour marks the current section with
+              something other than a subtle background change. */}
+          <span
+            aria-hidden="true"
+            className="absolute inset-x-3 bottom-1 h-[2px] origin-left rounded-full"
+            style={{
+              backgroundColor: "var(--color-violet-600)",
+              transform: isActive ? "scaleX(1)" : "scaleX(0)",
+              opacity: isActive ? 1 : 0,
+              transition:
+                "transform var(--duration-base) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard)",
+            }}
+          />
+        </>
+      )}
     </NavLink>
   );
 }

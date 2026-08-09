@@ -27,10 +27,10 @@ export function RegisterPage() {
     const errors: Record<string, string> = {};
 
     if (!fullName.trim()) {
-      errors.fullName = "Ingresá tu nombre completo";
+      errors.fullName = "Ingrese su nombre completo";
     }
     if (!email.trim()) {
-      errors.email = "Ingresá tu correo";
+      errors.email = "Ingrese su correo";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       errors.email = "El correo no tiene un formato válido";
     }
@@ -54,7 +54,7 @@ export function RegisterPage() {
         setError(err.message);
         if (err.fields) setFieldErrors(err.fields);
       } else {
-        setError("No pudimos conectarnos. Revisá tu conexión e intentá de nuevo.");
+        setError("No pudimos conectarnos. Revise su conexión e intente de nuevo.");
       }
     } finally {
       setSubmitting(false);
@@ -63,14 +63,14 @@ export function RegisterPage() {
 
   return (
     <AuthLayout
-      title="Creá tu cuenta"
-      subtitle="Te abrimos una cuenta bancaria al instante"
+      title="Cree su cuenta"
+      subtitle="Le abrimos una cuenta bancaria al instante"
     >
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
         {error && (
           <div
             role="alert"
-            className="rounded-md border px-3 py-2.5 text-sm"
+            className="animate-slide-in rounded-md border px-3 py-2.5 text-sm"
             style={{
               backgroundColor: "var(--surface-sunken)",
               borderColor: "var(--color-danger)",
@@ -121,13 +121,13 @@ export function RegisterPage() {
       </form>
 
       <p className="mt-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
-        ¿Ya tenés cuenta?{" "}
+        ¿Ya tiene cuenta?{" "}
         <Link
           to="/ingresar"
           className="font-medium underline underline-offset-2"
           style={{ color: "var(--text-accent)" }}
         >
-          Ingresá
+          Ingrese
         </Link>
       </p>
     </AuthLayout>

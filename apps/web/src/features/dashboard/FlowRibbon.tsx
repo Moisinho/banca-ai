@@ -6,13 +6,21 @@ import type { Transaction } from "@/types/api";
 /**
  * Flow Ribbon — the dashboard's signature element.
  *
- * Shows money *moving through* the month rather than sitting still. Inflow
+ * Shows money *moving through* the period rather than sitting still. Inflow
  * rises above the axis, outflow falls below, and the running balance threads
- * through as a hairline.
+ * through as a line.
  *
- * It exists because people do not experience money as a static number; they
- * experience it as flow — what came in and what went out. A balance card
- * answers "how much"; this answers "what happened".
+ * Readability notes, learned from the previous version:
+ *
+ * - Bars are solid, not gradient-filled. A gradient that fades to 15% opacity
+ *   makes a short bar nearly invisible and makes two bars of the same height
+ *   look like different values.
+ * - Inflow and outflow are distinguished by colour *and* by side of the axis,
+ *   so the direction survives a greyscale print or colour blindness.
+ * - There is a value axis. Without one, a bar chart shows shape but not
+ *   magnitude, and "how much came in" is the actual question here.
+ * - The scale maximum is rounded to a clean number, so the axis labels can be
+ *   compared at a glance instead of decoded.
  */
 
 interface FlowRibbonProps {
@@ -32,14 +40,16 @@ interface DayBucket {
 /** Chart geometry, in SVG user units. */
 const CHART = {
   width: 800,
-  height: 200,
-  paddingX: 8,
-  paddingY: 16,
-  /** Vertical centre: the axis that separates inflow from outflow. */
-  get axisY() {
-    return this.height / 2;
-  },
+  height: 260,
+  paddingLeft: 62,
+  paddingRight: 12,
+  paddingTop: 18,
+  paddingBottom: 30,
 } as const;
+
+/** Vertical space available above (or below) the axis for the tallest bar. */
+const HALF_HEIGHT = (CHART.height - CHART.paddingTop - CHART.paddingBottom) / 2;
+const AXIS_Y = CHART.paddingTop + HALF_HEIGHT;
 
 export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) {
   const gradientId = useId();
@@ -47,13 +57,23 @@ export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) 
 
   const buckets = useMemo(() => bucketByDay(transactions), [transactions]);
 
+  const totals = useMemo(
+    () =>
+      buckets.reduce(
+        (acc, b) => ({ inflow: acc.inflow + b.inflow, outflow: acc.outflow + b.outflow }),
+        { inflow: 0, outflow: 0 },
+      ),
+    [buckets],
+  );
+
   if (buckets.length === 0) {
     return (
       <div
-        className="flex h-[200px] items-center justify-center rounded-lg border"
+        className="animate-fade-in flex h-[200px] items-center justify-center rounded-lg border"
         style={{
           backgroundColor: "var(--surface-raised)",
           borderColor: "var(--border-subtle)",
+          boxShadow: "var(--shadow-sm)",
         }}
       >
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
@@ -63,68 +83,78 @@ export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) 
     );
   }
 
-  const maxFlow = Math.max(
-    ...buckets.map((b) => Math.max(b.inflow, b.outflow)),
-    1, // avoids dividing by zero on a month with no movement
-  );
+  const maxFlow = Math.max(...buckets.map((b) => Math.max(b.inflow, b.outflow)), 1);
 
-  const balances = buckets.map((b) => b.balance);
-  const minBalance = Math.min(...balances);
-  const maxBalance = Math.max(...balances, minBalance + 1);
+  // Round the scale up to a clean number so the axis labels are readable
+  // ("1.500" instead of "1.487,33").
+  const scaleMax = niceCeiling(maxFlow);
 
-  const usableWidth = CHART.width - CHART.paddingX * 2;
-  const usableHeight = CHART.axisY - CHART.paddingY;
+  const usableWidth = CHART.width - CHART.paddingLeft - CHART.paddingRight;
   const columnWidth = usableWidth / buckets.length;
 
-  const xFor = (index: number) => CHART.paddingX + index * columnWidth + columnWidth / 2;
+  // Bars stay slim and centred in their slot, with a floor so a single-day
+  // period does not render one bar 700px wide.
+  const barWidth = Math.max(Math.min(columnWidth - 6, 26), 3);
 
-  const balancePoints = buckets.map((bucket, index) => {
-    const ratio = (bucket.balance - minBalance) / (maxBalance - minBalance);
-    // Inverted because SVG's y axis grows downward.
-    const y = CHART.height - CHART.paddingY - ratio * (CHART.height - CHART.paddingY * 2);
-    return `${xFor(index)},${y}`;
-  });
+  const xFor = (index: number) => CHART.paddingLeft + index * columnWidth + columnWidth / 2;
+  const heightFor = (value: number) => (value / scaleMax) * HALF_HEIGHT;
+
+  const balances = buckets.map((b) => b.balance);
+  const minBalance = Math.min(...balances, 0);
+  const maxBalance = Math.max(...balances, minBalance + 1);
+
+  const balancePoints = buckets
+    .map((bucket, index) => {
+      const ratio = (bucket.balance - minBalance) / (maxBalance - minBalance);
+      const y = CHART.height - CHART.paddingBottom - ratio * (CHART.height - CHART.paddingTop - CHART.paddingBottom);
+      return `${xFor(index)},${y}`;
+    })
+    .join(" ");
 
   const active = hovered !== null ? buckets[hovered] : null;
 
-  return (
-    <div className="w-full min-w-0">
-      {/* flex-wrap: the title plus three legend labels don't fit one row
-          below ~420px, and without wrap they'd force the chart wider than
-          the viewport instead of stacking. */}
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-        <h2
-          className="text-sm font-medium uppercase tracking-wider"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Flujo del período
-        </h2>
+  // Four gridlines per half: enough to read a value, few enough to stay quiet.
+  const gridValues = [0.5, 1].flatMap((fraction) => [fraction, -fraction]);
 
-        {/* Legend. Identity never rests on colour alone: each series is named. */}
-        <div className="flex items-center gap-4 text-xs">
-          <span className="inline-flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
+  return (
+    <div className="animate-rise w-full min-w-0">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+        <div>
+          <h2
+            className="text-sm font-semibold uppercase tracking-wider"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            Flujo del período
+          </h2>
+          {/* The totals answer the question the chart raises, in words. */}
+          <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>
+            Entró{" "}
+            <span className="amount" style={{ color: "var(--color-series-2)" }}>
+              {formatNumber(String(totals.inflow / 100))}
+            </span>{" "}
+            · Salió{" "}
+            <span className="amount" style={{ color: "var(--color-series-1)" }}>
+              {formatNumber(String(totals.outflow / 100))}
+            </span>{" "}
+            {currency}
+          </p>
+        </div>
+
+        {/* Legend. Identity never rests on colour alone: each series is named,
+            and the swatch shape mirrors the mark used in the chart. */}
+        <div className="flex flex-wrap items-center gap-4 text-xs">
+          <LegendItem color="var(--color-series-2)" label="Entradas" />
+          <LegendItem color="var(--color-series-1)" label="Salidas" />
+          <span
+            className="inline-flex items-center gap-1.5"
+            style={{ color: "var(--text-secondary)" }}
+          >
             <span
               aria-hidden="true"
-              className="inline-block h-2 w-2 rounded-sm"
-              style={{ backgroundColor: "var(--color-series-2)" }}
+              className="inline-block h-[2px] w-4 rounded-full"
+              style={{ backgroundColor: "var(--color-series-3)" }}
             />
-            Entradas
-          </span>
-          <span className="inline-flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
-            <span
-              aria-hidden="true"
-              className="inline-block h-2 w-2 rounded-sm"
-              style={{ backgroundColor: "var(--color-series-1)" }}
-            />
-            Salidas
-          </span>
-          <span className="inline-flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
-            <span
-              aria-hidden="true"
-              className="inline-block h-[2px] w-4"
-              style={{ backgroundColor: "var(--text-secondary)" }}
-            />
-            Saldo
+            Saldo acumulado
           </span>
         </div>
       </div>
@@ -134,117 +164,221 @@ export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) 
         style={{
           backgroundColor: "var(--surface-raised)",
           borderColor: "var(--border-subtle)",
+          boxShadow: "var(--shadow-sm)",
         }}
+        onMouseLeave={() => setHovered(null)}
       >
         <svg
           viewBox={`0 0 ${CHART.width} ${CHART.height}`}
           className="w-full"
           style={{ height: CHART.height }}
           role="img"
-          aria-label={`Flujo de dinero: ${buckets.length} días con movimientos`}
-          preserveAspectRatio="none"
+          aria-label={
+            `Flujo de dinero en ${buckets.length} días. ` +
+            `Entradas por ${formatNumber(String(totals.inflow / 100))} ${currency}, ` +
+            `salidas por ${formatNumber(String(totals.outflow / 100))} ${currency}.`
+          }
         >
           <defs>
-            <linearGradient id={`${gradientId}-in`} x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stopColor="var(--color-series-2)" stopOpacity="0.15" />
-              <stop offset="100%" stopColor="var(--color-series-2)" stopOpacity="0.75" />
-            </linearGradient>
-            <linearGradient id={`${gradientId}-out`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-series-1)" stopOpacity="0.75" />
-              <stop offset="100%" stopColor="var(--color-series-1)" stopOpacity="0.15" />
+            {/* A soft fill under the balance line, to separate it from the
+                bars without competing with them. */}
+            <linearGradient id={`${gradientId}-balance`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-series-3)" stopOpacity="0.18" />
+              <stop offset="100%" stopColor="var(--color-series-3)" stopOpacity="0" />
             </linearGradient>
           </defs>
 
-          {/* Centre axis: the waterline between money in and money out. */}
-          <line
-            x1={0}
-            y1={CHART.axisY}
-            x2={CHART.width}
-            y2={CHART.axisY}
-            stroke="var(--border-default)"
-            strokeWidth={1}
-          />
-
-          {buckets.map((bucket, index) => {
-            const x = CHART.paddingX + index * columnWidth;
-            // A 2px gap between bars keeps adjacent days readable as separate.
-            const barWidth = Math.max(columnWidth - 2, 1);
-
-            const inflowHeight = (bucket.inflow / maxFlow) * usableHeight;
-            const outflowHeight = (bucket.outflow / maxFlow) * usableHeight;
-            const isActive = hovered === index;
+          {/* --- Gridlines and value axis --- */}
+          {gridValues.map((fraction) => {
+            const y = AXIS_Y - fraction * HALF_HEIGHT;
+            const value = Math.abs(fraction) * scaleMax;
 
             return (
-              <g key={bucket.date}>
+              <g key={fraction}>
+                <line
+                  x1={CHART.paddingLeft}
+                  y1={y}
+                  x2={CHART.width - CHART.paddingRight}
+                  y2={y}
+                  stroke="var(--border-subtle)"
+                  strokeWidth={1}
+                />
+                <text
+                  x={CHART.paddingLeft - 8}
+                  y={y + 3.5}
+                  textAnchor="end"
+                  fontSize={10}
+                  fill="var(--text-muted)"
+                  className="amount"
+                >
+                  {compactNumber(value / 100)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Zero line: the waterline between money in and money out. */}
+          <line
+            x1={CHART.paddingLeft}
+            y1={AXIS_Y}
+            x2={CHART.width - CHART.paddingRight}
+            y2={AXIS_Y}
+            stroke="var(--border-default)"
+            strokeWidth={1.5}
+          />
+          <text
+            x={CHART.paddingLeft - 8}
+            y={AXIS_Y + 3.5}
+            textAnchor="end"
+            fontSize={10}
+            fill="var(--text-muted)"
+            className="amount"
+          >
+            0
+          </text>
+
+          {/* --- Bars --- */}
+          {buckets.map((bucket, index) => {
+            const x = xFor(index) - barWidth / 2;
+            const inflowHeight = heightFor(bucket.inflow);
+            const outflowHeight = heightFor(bucket.outflow);
+            const dimmed = hovered !== null && hovered !== index;
+
+            return (
+              <g
+                key={bucket.date}
+                style={{
+                  opacity: dimmed ? 0.35 : 1,
+                  transition: "opacity var(--duration-fast) var(--ease-standard)",
+                }}
+              >
                 {bucket.inflow > 0 && (
                   <rect
-                    x={x + 1}
-                    y={CHART.axisY - inflowHeight}
+                    x={x}
+                    y={AXIS_Y - inflowHeight}
                     width={barWidth}
                     height={inflowHeight}
-                    fill={`url(#${gradientId}-in)`}
-                    opacity={hovered === null || isActive ? 1 : 0.4}
+                    fill="var(--color-series-2)"
                     rx={2}
-                  />
+                  >
+                    {/* Bars grow from the axis on first paint. */}
+                    <animate
+                      attributeName="height"
+                      from="0"
+                      to={inflowHeight}
+                      dur="0.45s"
+                      fill="freeze"
+                      calcMode="spline"
+                      keySplines="0.2 0 0 1"
+                    />
+                    <animate
+                      attributeName="y"
+                      from={AXIS_Y}
+                      to={AXIS_Y - inflowHeight}
+                      dur="0.45s"
+                      fill="freeze"
+                      calcMode="spline"
+                      keySplines="0.2 0 0 1"
+                    />
+                  </rect>
                 )}
 
                 {bucket.outflow > 0 && (
                   <rect
-                    x={x + 1}
-                    y={CHART.axisY}
+                    x={x}
+                    y={AXIS_Y}
                     width={barWidth}
                     height={outflowHeight}
-                    fill={`url(#${gradientId}-out)`}
-                    opacity={hovered === null || isActive ? 1 : 0.4}
+                    fill="var(--color-series-1)"
                     rx={2}
-                  />
+                  >
+                    <animate
+                      attributeName="height"
+                      from="0"
+                      to={outflowHeight}
+                      dur="0.45s"
+                      fill="freeze"
+                      calcMode="spline"
+                      keySplines="0.2 0 0 1"
+                    />
+                  </rect>
                 )}
 
-                {/* Invisible hit area, wider than the bar so hovering is easy. */}
+                {/* Invisible hit area spanning the full column, so hovering
+                    does not require aiming at a thin bar. */}
                 <rect
-                  x={x}
-                  y={0}
+                  x={CHART.paddingLeft + index * columnWidth}
+                  y={CHART.paddingTop}
                   width={columnWidth}
-                  height={CHART.height}
+                  height={CHART.height - CHART.paddingTop - CHART.paddingBottom}
                   fill="transparent"
                   onMouseEnter={() => setHovered(index)}
-                  onMouseLeave={() => setHovered(null)}
                   style={{ cursor: "pointer" }}
                 />
               </g>
             );
           })}
 
-          {/* The balance runs as a hairline through the flow. */}
+          {/* --- Running balance --- */}
           <polyline
-            points={balancePoints.join(" ")}
+            points={balancePoints}
             fill="none"
-            stroke="var(--text-secondary)"
-            strokeWidth={1.5}
+            stroke="var(--color-series-3)"
+            strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
-            opacity={0.7}
           />
 
           {hovered !== null && (
-            <line
-              x1={xFor(hovered)}
-              y1={0}
-              x2={xFor(hovered)}
-              y2={CHART.height}
-              stroke="var(--text-muted)"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-            />
+            <>
+              <line
+                x1={xFor(hovered)}
+                y1={CHART.paddingTop}
+                x2={xFor(hovered)}
+                y2={CHART.height - CHART.paddingBottom}
+                stroke="var(--text-muted)"
+                strokeWidth={1}
+                strokeDasharray="3 3"
+              />
+              <circle
+                cx={xFor(hovered)}
+                cy={balancePointY(buckets[hovered]!, minBalance, maxBalance)}
+                r={3.5}
+                fill="var(--color-series-3)"
+                stroke="var(--surface-raised)"
+                strokeWidth={2}
+              />
+            </>
           )}
+
+          {/* --- Date axis --- */}
+          {buckets.map((bucket, index) => {
+            // Only a few labels fit; thinning keeps them from colliding.
+            const step = Math.ceil(buckets.length / 8);
+            if (index % step !== 0 && index !== buckets.length - 1) return null;
+
+            return (
+              <text
+                key={`label-${bucket.date}`}
+                x={xFor(index)}
+                y={CHART.height - 10}
+                textAnchor="middle"
+                fontSize={10}
+                fill="var(--text-muted)"
+              >
+                {shortDate(bucket.date)}
+              </text>
+            );
+          })}
         </svg>
 
         {active && (
           <div
-            className="pointer-events-none absolute left-3 top-3 rounded-md border px-3 py-2 text-xs"
+            className="animate-fade-in pointer-events-none absolute left-3 top-3 rounded-md border px-3 py-2 text-xs"
             style={{
-              backgroundColor: "var(--surface-base)",
+              backgroundColor: "var(--surface-raised)",
               borderColor: "var(--border-default)",
+              boxShadow: "var(--shadow-lg)",
             }}
           >
             <p className="mb-1 font-medium" style={{ color: "var(--text-primary)" }}>
@@ -262,8 +396,12 @@ export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) 
                 {currency}
               </p>
             )}
-            <p className="mt-1" style={{ color: "var(--text-secondary)" }}>
+            <p className="mt-1 border-t pt-1" style={{ color: "var(--text-secondary)" }}>
               Saldo <span className="amount">{formatNumber(String(active.balance / 100))}</span>
+            </p>
+            <p style={{ color: "var(--text-muted)" }}>
+              {active.transactions}{" "}
+              {active.transactions === 1 ? "movimiento" : "movimientos"}
             </p>
           </div>
         )}
@@ -272,7 +410,7 @@ export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) 
       {/* Table fallback: the chart is not the only way to read this data. */}
       <details className="mt-3">
         <summary
-          className="cursor-pointer text-xs"
+          className="cursor-pointer text-xs transition-colors hover:text-[var(--text-secondary)]"
           style={{ color: "var(--text-muted)" }}
         >
           Ver los datos como tabla
@@ -310,11 +448,64 @@ export function FlowRibbon({ transactions, currency = "USD" }: FlowRibbonProps) 
   );
 }
 
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
+      <span
+        aria-hidden="true"
+        className="inline-block h-2.5 w-2.5 rounded-sm"
+        style={{ backgroundColor: color }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function balancePointY(bucket: DayBucket, minBalance: number, maxBalance: number): number {
+  const ratio = (bucket.balance - minBalance) / (maxBalance - minBalance);
+  return (
+    CHART.height - CHART.paddingBottom - ratio * (CHART.height - CHART.paddingTop - CHART.paddingBottom)
+  );
+}
+
+/**
+ * Rounds a value up to a readable scale maximum.
+ *
+ * A raw maximum like 148.733 produces axis labels nobody can compare at a
+ * glance; 150.000 reads instantly.
+ */
+function niceCeiling(value: number): number {
+  if (value <= 0) return 1;
+
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / magnitude;
+
+  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+/** Compact axis label: 1500 becomes "1,5 k". */
+function compactNumber(value: number): string {
+  if (Math.abs(value) >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1).replace(".", ",")} M`;
+  }
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toFixed(1).replace(".", ",")} k`;
+  }
+  return String(Math.round(value));
+}
+
+/** Axis date label: "2024-03-15" becomes "15/3". */
+function shortDate(iso: string): string {
+  const [, month, day] = iso.split("-");
+  return `${Number(day)}/${Number(month)}`;
+}
+
 /**
  * Groups transactions by day and computes the running balance.
  *
- * The API returns newest first, so the list is walked in reverse to accumulate
- * the balance forward in time.
+ * The API returns newest first, so the list is walked in date order to
+ * accumulate the balance forward in time.
  */
 function bucketByDay(transactions: Transaction[]): DayBucket[] {
   if (transactions.length === 0) return [];

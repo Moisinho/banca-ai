@@ -55,16 +55,16 @@ export function TransactionsPage() {
     const errors: Record<string, string> = {};
 
     if (!isValidAmount(amount)) {
-      errors.amount = "Ingresá un monto válido, con hasta dos decimales";
+      errors.amount = "Ingrese un monto válido, con hasta dos decimales";
     }
 
     if (operation === "transfer") {
       if (!toAccountNumber.trim()) {
-        errors.toAccountNumber = "Ingresá la cuenta destino";
+        errors.toAccountNumber = "Ingrese la cuenta destino";
       } else if (!/^\d{4}(-\d{4}){3}$/.test(toAccountNumber.trim())) {
         errors.toAccountNumber = "El formato debe ser 4001-XXXX-XXXX-XXXX";
       } else if (toAccountNumber.trim() === account.accountNumber) {
-        errors.toAccountNumber = "No podés transferir a tu misma cuenta";
+        errors.toAccountNumber = "No puede transferir a su misma cuenta";
       }
     }
 
@@ -79,10 +79,10 @@ export function TransactionsPage() {
 
       if (operation === "deposit") {
         await txApi.deposit({ accountId: account.id, amount: normalized, description });
-        setSuccess(`Depositaste ${formatNumber(normalized)} ${account.currency}`);
+        setSuccess(`Depósito realizado por ${formatNumber(normalized)} ${account.currency}`);
       } else if (operation === "withdraw") {
         await txApi.withdraw({ accountId: account.id, amount: normalized, description });
-        setSuccess(`Retiraste ${formatNumber(normalized)} ${account.currency}`);
+        setSuccess(`Retiro realizado por ${formatNumber(normalized)} ${account.currency}`);
       } else {
         await txApi.transfer({
           fromAccountId: account.id,
@@ -91,7 +91,7 @@ export function TransactionsPage() {
           description,
         });
         setSuccess(
-          `Transferiste ${formatNumber(normalized)} ${account.currency} a ${toAccountNumber.trim()}`,
+          `Transferencia realizada por ${formatNumber(normalized)} ${account.currency} a ${toAccountNumber.trim()}`,
         );
       }
 
@@ -103,7 +103,7 @@ export function TransactionsPage() {
       setError(
         err instanceof ApiError
           ? err.message
-          : "No pudimos completar la operación. Intentá de nuevo.",
+          : "No pudimos completar la operación. Intente de nuevo.",
       );
     } finally {
       setSubmitting(false);
@@ -111,7 +111,7 @@ export function TransactionsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg">
+    <div className="animate-fade-in mx-auto max-w-lg">
       <h1
         className="mb-1 text-2xl"
         style={{
@@ -124,7 +124,7 @@ export function TransactionsPage() {
         Nueva operación
       </h1>
       <p className="mb-6 text-sm" style={{ color: "var(--text-muted)" }}>
-        También podés pedírselo al asistente en el panel de conversación.
+        También puede solicitarlo al asistente en el panel de conversación.
       </p>
 
       {account && (
@@ -152,7 +152,7 @@ export function TransactionsPage() {
           {(Object.keys(operationLabels) as Operation[]).map((value) => (
             <label
               key={value}
-              className="cursor-pointer rounded-md border px-3 py-2.5 text-center text-sm transition-colors"
+              className="lift cursor-pointer rounded-md border px-3 py-2.5 text-center text-sm"
               style={{
                 backgroundColor:
                   operation === value ? "var(--color-violet-600)" : "var(--surface-raised)",
@@ -184,7 +184,7 @@ export function TransactionsPage() {
         {success && (
           <div
             role="status"
-            className="rounded-md border px-3 py-2.5"
+            className="animate-slide-in rounded-md border px-3 py-2.5"
             style={{
               backgroundColor: "var(--surface-sunken)",
               borderColor: "var(--color-success)",
@@ -197,7 +197,7 @@ export function TransactionsPage() {
         {error && (
           <div
             role="alert"
-            className="rounded-md border px-3 py-2.5 text-sm"
+            className="animate-slide-in rounded-md border px-3 py-2.5 text-sm"
             style={{
               backgroundColor: "var(--surface-sunken)",
               borderColor: "var(--color-danger)",

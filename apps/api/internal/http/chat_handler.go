@@ -97,7 +97,7 @@ func (h *ChatHandler) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *ChatHandler) sendMessage(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) history(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -141,7 +141,24 @@ func (h *ChatHandler) history(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	messages, err := h.service.History(r.Context(), userID, limit)
+	var (
+		messages []domain.ChatMessage
+		hasMore  bool
+		err      error
+	)
+
+	// Con `before` se piden los mensajes anteriores a uno concreto: es como la
+	// interfaz carga el tramo siguiente cuando la persona sube en el hilo.
+	if before := r.URL.Query().Get("before"); before != "" {
+		messages, hasMore, err = h.service.HistoryBefore(r.Context(), userID, before, limit)
+	} else {
+		messages, err = h.service.History(r.Context(), userID, limit)
+		// En la carga inicial se traen los más recientes. Si llegó una página
+		// completa es probable que haya más hacia atrás; la petición siguiente
+		// lo confirma.
+		hasMore = len(messages) == limit
+	}
+
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -168,7 +185,10 @@ func (h *ChatHandler) history(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 
-	response.JSON(w, r, http.StatusOK, map[string]any{"messages": items})
+	response.JSON(w, r, http.StatusOK, map[string]any{
+		"messages": items,
+		"hasMore":  hasMore,
+	})
 }
 
 func (h *ChatHandler) confirm(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +206,7 @@ func (h *ChatHandler) reject(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) resolve(w http.ResponseWriter, r *http.Request, confirm bool) {
 	userID, ok := middleware.UserIDFrom(r.Context())
 	if !ok {
-		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesitás iniciar sesión")
+		response.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Necesita iniciar sesión")
 		return
 	}
 
@@ -237,7 +257,7 @@ func (h *ChatHandler) writeError(w http.ResponseWriter, r *http.Request, err err
 		response.Error(w, r, http.StatusGone, code, "La operación expiró. Pedile al asistente que la prepare de nuevo.")
 
 	case errors.Is(err, domain.ErrInsufficientFunds):
-		response.Error(w, r, http.StatusUnprocessableEntity, code, "No tenés fondos suficientes para esta operación")
+		response.Error(w, r, http.StatusUnprocessableEntity, code, "No tiene fondos suficientes para esta operación")
 
 	// Fallos del proveedor de IA. Se distinguen del error genérico porque el
 	// problema no está en la aplicación sino en la configuración del servicio,
@@ -251,7 +271,7 @@ func (h *ChatHandler) writeError(w http.ResponseWriter, r *http.Request, err err
 		errors.Is(err, openrouter.ErrProviderOverloaded):
 		response.Error(w, r, http.StatusServiceUnavailable,
 			"AI_OVERLOADED",
-			"El asistente está saturado en este momento. Esperá unos segundos e intentá de nuevo.")
+			"El asistente está saturado en este momento. Espere unos segundos e intente de nuevo.")
 
 	// Una consulta que tardó demasiado. Se distingue de un fallo real para que
 	// la persona sepa que puede reintentar.

@@ -24,8 +24,8 @@ export function LoginPage() {
     // Client-side validation mirrors the server's, but never replaces it:
     // it only saves a round trip on obvious mistakes.
     const errors: Record<string, string> = {};
-    if (!email.trim()) errors.email = "Ingresá tu correo";
-    if (!password) errors.password = "Ingresá tu contraseña";
+    if (!email.trim()) errors.email = "Ingrese su correo";
+    if (!password) errors.password = "Ingrese su contraseña";
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -41,7 +41,7 @@ export function LoginPage() {
         setError(err.message);
         if (err.fields) setFieldErrors(err.fields);
       } else {
-        setError("No pudimos conectarnos. Revisá tu conexión e intentá de nuevo.");
+        setError("No pudimos conectarnos. Revise su conexión e intente de nuevo.");
       }
     } finally {
       setSubmitting(false);
@@ -50,14 +50,14 @@ export function LoginPage() {
 
   return (
     <AuthLayout
-      title="Ingresá a tu cuenta"
-      subtitle="Gestioná tu dinero con la ayuda de un asistente"
+      title="Ingrese a su cuenta"
+      subtitle="Gestione su dinero con la ayuda de un asistente"
     >
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
         {error && (
           <div
             role="alert"
-            className="rounded-md border px-3 py-2.5 text-sm"
+            className="animate-slide-in rounded-md border px-3 py-2.5 text-sm"
             style={{
               backgroundColor: "var(--surface-sunken)",
               borderColor: "var(--color-danger)",
@@ -72,7 +72,7 @@ export function LoginPage() {
           label="Correo electrónico"
           type="email"
           autoComplete="email"
-          placeholder="tu@correo.com"
+          placeholder="nombre@correo.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           error={fieldErrors.email}
@@ -96,13 +96,13 @@ export function LoginPage() {
       </form>
 
       <p className="mt-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
-        ¿No tenés cuenta?{" "}
+        ¿No tiene cuenta?{" "}
         <Link
           to="/registro"
-          className="font-medium underline underline-offset-2"
+          className="font-medium underline underline-offset-2 transition-opacity hover:opacity-70"
           style={{ color: "var(--text-accent)" }}
         >
-          Creá una
+          Cree una
         </Link>
       </p>
     </AuthLayout>

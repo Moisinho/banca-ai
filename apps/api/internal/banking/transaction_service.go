@@ -439,6 +439,19 @@ func (s *TransactionService) History(ctx context.Context, in HistoryInput) (Hist
 	}, nil
 }
 
+// descriptionKey devuelve el id contra el que hay que buscar la descripción
+// de una transacción.
+//
+// Para una fila normal es su propio id. Para la que confirmó o canceló una
+// reserva es el id de esa reserva original, que es donde storeDescription la
+// guardó cuando la operación se propuso.
+func descriptionKey(tx domain.Transaction) *big.Int {
+	if tx.OriginalPendingID != nil {
+		return tx.OriginalPendingID
+	}
+	return tx.ID
+}
+
 // enrich completa las transacciones con datos que TigerBeetle no guarda:
 // las descripciones y los números de cuenta legibles.
 func (s *TransactionService) enrich(ctx context.Context, transactions []domain.Transaction, viewpoint domain.Account) {
@@ -446,9 +459,15 @@ func (s *TransactionService) enrich(ctx context.Context, transactions []domain.T
 		return
 	}
 
+	// La descripción de una operación en dos fases se guardó contra el id de
+	// la RESERVA (es el único id que existe en el momento en que la persona
+	// escribe el concepto). La fila que el historial termina mostrando es la
+	// que la confirmó o canceló, con un id nuevo que TigerBeetle generó y que
+	// nunca tuvo una descripción asociada. Por eso se busca con
+	// descriptionKey(tx), no con tx.ID directamente.
 	ids := make([]*big.Int, 0, len(transactions))
 	for _, tx := range transactions {
-		ids = append(ids, tx.ID)
+		ids = append(ids, descriptionKey(tx))
 	}
 
 	descriptions, err := s.metadata.GetMany(ctx, ids)
@@ -461,7 +480,7 @@ func (s *TransactionService) enrich(ctx context.Context, transactions []domain.T
 
 	for i := range transactions {
 		tx := &transactions[i]
-		tx.Description = descriptions[tx.ID.String()]
+		tx.Description = descriptions[descriptionKey(*tx).String()]
 		tx.Currency = viewpoint.Currency
 
 		// TigerBeetle guarda ids numéricos, no números de cuenta. Reconstruimos

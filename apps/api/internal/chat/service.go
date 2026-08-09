@@ -40,25 +40,30 @@ const maxHistoryMessages = 20
 // convencido de ignorarlo. Las garantías reales son arquitectónicas: las
 // herramientas no aceptan un id de usuario, y ninguna mueve dinero por su
 // cuenta. Esto sólo define el tono y la utilidad.
-const systemPrompt = `Sos el asistente bancario de Banca AI. Ayudás a las personas a gestionar su dinero.
+const systemPrompt = `Eres el asistente bancario de Banca AI. Ayudas a las personas a gestionar su dinero.
 
-Podés:
+Puedes:
 - Consultar saldos y datos de cuentas
 - Mostrar el historial de movimientos
 - Preparar depósitos, retiros y transferencias
 
 Reglas de comportamiento:
-1. Las operaciones que mueven dinero NO se ejecutan cuando las preparás: quedan
+1. Las operaciones que mueven dinero NO se ejecutan cuando las preparas: quedan
    esperando que la persona las confirme en la interfaz. Nunca digas que una
-   operación ya se realizó. Decí que está preparada y pendiente de confirmación.
-2. Antes de preparar una transferencia, repetí en tu respuesta el monto y la
+   operación ya se realizó. Indica que está preparada y pendiente de confirmación.
+2. Antes de preparar una transferencia, repite en tu respuesta el monto y la
    cuenta destino para que la persona pueda revisarlos.
-3. Si una herramienta devuelve un error, explicá en lenguaje claro qué pasó.
-4. Respondé siempre en español, de forma breve y concreta.
+3. Si una herramienta devuelve un error, explica en lenguaje claro qué ocurrió.
+4. Responde siempre en español neutro, de forma breve y concreta. No uses
+   regionalismos ni el voseo: escribe "puede", "tiene", "confirme", nunca
+   "podés", "tenés" o "confirmás".
 5. Los montos van siempre con dos decimales y su moneda.
-6. Si te piden algo que no podés hacer, decilo con claridad en lugar de inventar.
+6. Si te piden algo que no puedes hacer, indícalo con claridad en lugar de
+   inventar una respuesta.
+7. Prepara como máximo una operación con dinero por mensaje. Si ya hay una
+   esperando confirmación, pide que la resuelva antes de preparar otra.
 
-Sólo tenés acceso a las cuentas de la persona con la que estás hablando. No
+Sólo tienes acceso a las cuentas de la persona con la que estás hablando. No
 existe forma de consultar ni operar cuentas de terceros.`
 
 // Service maneja la conversación con el modelo.
@@ -177,6 +182,33 @@ func (s *Service) Send(ctx context.Context, userID, text string) (Reply, error) 
 		})
 
 		for _, call := range completion.ToolCalls {
+			// Una sola operación con dinero por turno.
+			//
+			// El modelo puede emitir la misma herramienta dos veces: dos llamadas
+			// en una vuelta, o una repetición más adelante porque no interpretó
+			// que ya estaba preparada. Cada ejecución reservaría fondos de verdad
+			// en el ledger, y como la respuesta sólo transporta UNA operación
+			// pendiente, la reserva sobrante quedaría bloqueando dinero que el
+			// usuario no ve ni puede resolver hasta que venza.
+			//
+			// Se corta antes de ejecutar: se le informa al modelo para que lo
+			// explique, en lugar de reservar y descartar.
+			if pending != nil && movesMoney(call.Name) {
+				s.log.Warn("se descartó una segunda operación con dinero en el mismo turno",
+					"user_id", userID,
+					"tool", call.Name,
+				)
+
+				conversation = append(conversation, ports.ChatMessage{
+					Role: "tool",
+					Content: "Ya hay una operación preparada y pendiente de confirmación " +
+						"en este mismo turno. No se preparó otra. Informe a la persona " +
+						"que primero debe confirmar o cancelar la que está esperando.",
+					ToolCallID: call.ID,
+				})
+				continue
+			}
+
 			result, proposal, err := s.executeTool(ctx, session, userID, call)
 			if err != nil {
 				return Reply{}, err
@@ -200,7 +232,7 @@ func (s *Service) Send(ctx context.Context, userID, text string) (Reply, error) 
 	assistant := domain.ChatMessage{
 		UserID:  userID,
 		Role:    domain.ChatRoleAssistant,
-		Content: "No pude completar la consulta. ¿Podés reformularla?",
+		Content: "No pude completar la consulta. ¿Puede reformularla?",
 	}
 	stored, err := s.messages.Store(ctx, assistant)
 	if err != nil {
@@ -388,10 +420,26 @@ func (s *Service) Reject(ctx context.Context, userID string, transferID *big.Int
 
 // History devuelve los mensajes recientes de la conversación.
 func (s *Service) History(ctx context.Context, userID string, limit int) ([]domain.ChatMessage, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
+	return s.messages.ListRecent(ctx, userID, normalizeHistoryLimit(limit))
+}
+
+// HistoryBefore devuelve los mensajes anteriores a uno dado.
+//
+// Es lo que permite que la conversación se cargue de a tramos al subir, en
+// lugar de traer el hilo completo de entrada.
+func (s *Service) HistoryBefore(ctx context.Context, userID, beforeID string, limit int) ([]domain.ChatMessage, bool, error) {
+	if beforeID == "" {
+		return nil, false, domain.ErrInvalidCursor
 	}
-	return s.messages.ListRecent(ctx, userID, limit)
+	return s.messages.ListBefore(ctx, userID, beforeID, normalizeHistoryLimit(limit))
+}
+
+// normalizeHistoryLimit acota lo que puede pedir un cliente.
+func normalizeHistoryLimit(limit int) int {
+	if limit <= 0 || limit > 100 {
+		return 50
+	}
+	return limit
 }
 
 // ------------------------------------------------------------------------------

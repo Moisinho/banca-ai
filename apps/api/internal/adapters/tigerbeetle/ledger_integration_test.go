@@ -246,6 +246,160 @@ func TestTransferenciaEnDosFasesCancelada(t *testing.T) {
 	assert.Equal(t, domain.Money(0), balanceDestino.Available, "el destino nunca recibió nada")
 }
 
+// Una transferencia confirmada queda en TigerBeetle como dos registros: la
+// reserva (pending) y la que la resuelve (post), con ids distintos unidos por
+// PendingID. Antes del fix, ListTransfers devolvía ambos y la operación
+// aparecía dos veces en el historial con el mismo monto y concepto — el
+// dinero nunca se duplicó, pero la lista sí mostraba el registro repetido.
+func TestLaOperacionConfirmadaApareceUnaSolaVezEnElHistorial(t *testing.T) {
+	ledger := newTestLedger(t)
+	ctx := context.Background()
+
+	require.NoError(t, ledger.EnsureOperatorAccount(ctx))
+
+	origen := uniqueAccountID(t, 20)
+	destino := uniqueAccountID(t, 21)
+	require.NoError(t, ledger.CreateAccount(ctx, origen, domain.AccountTypeChecking))
+	require.NoError(t, ledger.CreateAccount(ctx, destino, domain.AccountTypeSavings))
+
+	fondos, _ := domain.ParseMoney("1000.00")
+	_, err := ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: big.NewInt(int64(domain.OperatorAccountID)),
+		ToTigerBeetleID:   origen,
+		Amount:            fondos,
+		Type:              domain.TransactionTypeDeposit,
+	})
+	require.NoError(t, err)
+
+	monto, _ := domain.ParseMoney("150.00")
+	pendingID, err := ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: origen,
+		ToTigerBeetleID:   destino,
+		Amount:            monto,
+		Type:              domain.TransactionTypeTransfer,
+		Pending:           true,
+		PendingTimeout:    5 * time.Minute,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, ledger.PostPending(ctx, pendingID))
+
+	transacciones, err := ledger.ListTransfers(ctx, origen, ports.TransferFilter{Limit: 10})
+	require.NoError(t, err)
+
+	// Sólo debe aparecer UNA fila para esta transferencia, no dos.
+	coincidencias := 0
+	var vista domain.Transaction
+	for _, tx := range transacciones {
+		if tx.Amount == monto {
+			coincidencias++
+			vista = tx
+		}
+	}
+
+	assert.Equal(t, 1, coincidencias,
+		"una operación confirmada debe aparecer una sola vez en el historial")
+	assert.Equal(t, domain.TransactionStatusCompleted, vista.Status,
+		"la fila que queda debe mostrar el estado final, no 'pendiente'")
+}
+
+// A diferencia de una confirmación, cancelar una reserva NO es un movimiento:
+// el dinero nunca salió de la cuenta, TigerBeetle sólo liberó lo reservado.
+// Ni la reserva ni el registro que la canceló deben aparecer en el historial
+// de movimientos. El estado "cancelada" sigue visible donde tiene sentido —la
+// tarjeta de confirmación del chat—, pero no como una fila con signo negativo
+// entre depósitos y transferencias reales.
+func TestLaOperacionCanceladaNoApareceEnElHistorial(t *testing.T) {
+	ledger := newTestLedger(t)
+	ctx := context.Background()
+
+	require.NoError(t, ledger.EnsureOperatorAccount(ctx))
+
+	origen := uniqueAccountID(t, 22)
+	destino := uniqueAccountID(t, 23)
+	require.NoError(t, ledger.CreateAccount(ctx, origen, domain.AccountTypeChecking))
+	require.NoError(t, ledger.CreateAccount(ctx, destino, domain.AccountTypeSavings))
+
+	fondos, _ := domain.ParseMoney("1000.00")
+	_, err := ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: big.NewInt(int64(domain.OperatorAccountID)),
+		ToTigerBeetleID:   origen,
+		Amount:            fondos,
+		Type:              domain.TransactionTypeDeposit,
+	})
+	require.NoError(t, err)
+
+	monto, _ := domain.ParseMoney("77.00")
+	pendingID, err := ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: origen,
+		ToTigerBeetleID:   destino,
+		Amount:            monto,
+		Type:              domain.TransactionTypeTransfer,
+		Pending:           true,
+		PendingTimeout:    5 * time.Minute,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, ledger.VoidPending(ctx, pendingID))
+
+	transacciones, err := ledger.ListTransfers(ctx, origen, ports.TransferFilter{Limit: 10})
+	require.NoError(t, err)
+
+	for _, tx := range transacciones {
+		assert.NotEqual(t, monto, tx.Amount,
+			"una operación cancelada no debe aparecer como movimiento en el historial")
+	}
+}
+
+// Una operación que todavía espera confirmación SÍ debe verse: no hay
+// segundo registro que la resuelva todavía, así que no hay nada que filtrar.
+func TestLaOperacionSinConfirmarSigueVisibleEnElHistorial(t *testing.T) {
+	ledger := newTestLedger(t)
+	ctx := context.Background()
+
+	require.NoError(t, ledger.EnsureOperatorAccount(ctx))
+
+	origen := uniqueAccountID(t, 24)
+	destino := uniqueAccountID(t, 25)
+	require.NoError(t, ledger.CreateAccount(ctx, origen, domain.AccountTypeChecking))
+	require.NoError(t, ledger.CreateAccount(ctx, destino, domain.AccountTypeSavings))
+
+	fondos, _ := domain.ParseMoney("1000.00")
+	_, err := ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: big.NewInt(int64(domain.OperatorAccountID)),
+		ToTigerBeetleID:   origen,
+		Amount:            fondos,
+		Type:              domain.TransactionTypeDeposit,
+	})
+	require.NoError(t, err)
+
+	monto, _ := domain.ParseMoney("42.00")
+	_, err = ledger.Transfer(ctx, domain.TransferRequest{
+		FromTigerBeetleID: origen,
+		ToTigerBeetleID:   destino,
+		Amount:            monto,
+		Type:              domain.TransactionTypeTransfer,
+		Pending:           true,
+		PendingTimeout:    5 * time.Minute,
+	})
+	require.NoError(t, err)
+
+	transacciones, err := ledger.ListTransfers(ctx, origen, ports.TransferFilter{Limit: 10})
+	require.NoError(t, err)
+
+	coincidencias := 0
+	var vista domain.Transaction
+	for _, tx := range transacciones {
+		if tx.Amount == monto {
+			coincidencias++
+			vista = tx
+		}
+	}
+
+	assert.Equal(t, 1, coincidencias, "la reserva debe verse mientras espera confirmación")
+	assert.Equal(t, domain.TransactionStatusPending, vista.Status)
+}
+
 func TestNoSePuedeConfirmarDosVeces(t *testing.T) {
 	ledger := newTestLedger(t)
 	ctx := context.Background()
