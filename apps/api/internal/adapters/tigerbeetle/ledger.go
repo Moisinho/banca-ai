@@ -193,6 +193,130 @@ func (l *Ledger) CreateAccount(ctx context.Context, tigerBeetleID *big.Int, acco
 	return nil
 }
 
+// maxBatchSize es cuántos eventos entran en una sola petición a TigerBeetle.
+//
+// El límite lo impone el tamaño del mensaje, no una cantidad fija de eventos:
+// la documentación cita 8.189, pero ese número corresponde a un clúster con el
+// mensaje configurado al máximo. Medido contra esta instalación, 254 eventos ya
+// devuelven "too much data was sent or requested in this batch" y 190 pasan.
+//
+// 190 deja margen y conserva casi todo el beneficio: la diferencia frente a
+// enviar de a uno sigue siendo de dos órdenes de magnitud en número de
+// peticiones, que es donde estaba el costo.
+const maxBatchSize = 190
+
+// CreateAccountsBatch crea muchas cuentas en pocas peticiones.
+//
+// La diferencia con llamar CreateAccount en un bucle es de dos órdenes de
+// magnitud: 1.500 cuentas pasan de 1.500 idas y vueltas a una sola.
+func (l *Ledger) CreateAccountsBatch(ctx context.Context, requests []AccountRequest) error {
+	if len(requests) == 0 {
+		return nil
+	}
+
+	for start := 0; start < len(requests); start += maxBatchSize {
+		end := min(start+maxBatchSize, len(requests))
+
+		batch := make([]tb.Account, 0, end-start)
+		for _, req := range requests[start:end] {
+			batch = append(batch, tb.Account{
+				ID:     tb.BigIntToUint128(req.TigerBeetleID),
+				Ledger: domain.LedgerUSD,
+				Code:   req.Type.Code(),
+				Flags: tb.AccountFlags{
+					DebitsMustNotExceedCredits: true,
+					History:                    true,
+				}.ToUint16(),
+			})
+		}
+
+		results, err := l.client.CreateAccounts(batch)
+		if err != nil {
+			return fmt.Errorf("no se pudo crear el lote de cuentas: %w", err)
+		}
+
+		// TigerBeetle sólo devuelve los índices que fallaron: un lote sin
+		// resultados significa que todo salió bien.
+		for _, res := range results {
+			if res.Status != tb.AccountCreated && res.Status != tb.AccountExists {
+				return fmt.Errorf("TigerBeetle rechazó una cuenta del lote: %s", res.Status)
+			}
+		}
+	}
+
+	return nil
+}
+
+// AccountRequest describe una cuenta por crear en lote.
+type AccountRequest struct {
+	TigerBeetleID *big.Int
+	Type          domain.AccountType
+}
+
+// TransferBatchItem es una transferencia dentro de un lote, con el
+// identificador que se le asignó.
+type TransferBatchItem struct {
+	Request domain.TransferRequest
+	ID      *big.Int
+}
+
+// TransferBatch ejecuta muchas transferencias en pocas peticiones.
+//
+// Devuelve los identificadores asignados, en el mismo orden de entrada, para
+// poder enlazar cada una con sus metadatos.
+func (l *Ledger) TransferBatch(ctx context.Context, requests []domain.TransferRequest) ([]TransferBatchItem, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+
+	out := make([]TransferBatchItem, 0, len(requests))
+
+	for start := 0; start < len(requests); start += maxBatchSize {
+		end := min(start+maxBatchSize, len(requests))
+
+		batch := make([]tb.Transfer, 0, end-start)
+		items := make([]TransferBatchItem, 0, end-start)
+
+		for _, req := range requests[start:end] {
+			if err := req.Validate(); err != nil {
+				return nil, err
+			}
+
+			code := req.Type.Code()
+			if req.CodeOverride != 0 {
+				code = req.CodeOverride
+			}
+
+			id := tb.ID()
+			batch = append(batch, tb.Transfer{
+				ID:              id,
+				DebitAccountID:  tb.BigIntToUint128(req.FromTigerBeetleID),
+				CreditAccountID: tb.BigIntToUint128(req.ToTigerBeetleID),
+				Amount:          tb.BytesToUint128(req.Amount.ToUint128Bytes()),
+				Ledger:          domain.LedgerUSD,
+				Code:            code,
+			})
+
+			items = append(items, TransferBatchItem{Request: req, ID: id.BigInt()})
+		}
+
+		results, err := l.client.CreateTransfers(batch)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudo ejecutar el lote de transferencias: %w", err)
+		}
+
+		for _, res := range results {
+			if err := translateTransferStatus(res.Status); err != nil {
+				return nil, err
+			}
+		}
+
+		out = append(out, items...)
+	}
+
+	return out, nil
+}
+
 // GetBalance devuelve el saldo actual de una cuenta.
 func (l *Ledger) GetBalance(ctx context.Context, tigerBeetleID *big.Int) (domain.Balance, error) {
 	accounts, err := l.client.LookupAccounts([]tb.Uint128{
@@ -256,13 +380,20 @@ func (l *Ledger) Transfer(ctx context.Context, req domain.TransferRequest) (*big
 	// frente a un UUID aleatorio.
 	transferID := tb.ID()
 
+	// El código identifica el tipo de operación dentro de TigerBeetle. La
+	// siembra lo sobrescribe para marcar sus asientos técnicos.
+	code := req.Type.Code()
+	if req.CodeOverride != 0 {
+		code = req.CodeOverride
+	}
+
 	transfer := tb.Transfer{
 		ID:              transferID,
 		DebitAccountID:  tb.BigIntToUint128(req.FromTigerBeetleID),
 		CreditAccountID: tb.BigIntToUint128(req.ToTigerBeetleID),
 		Amount:          tb.BytesToUint128(req.Amount.ToUint128Bytes()),
 		Ledger:          domain.LedgerUSD,
-		Code:            req.Type.Code(),
+		Code:            code,
 	}
 
 	if req.Pending {
@@ -383,6 +514,12 @@ func (l *Ledger) ListTransfers(ctx context.Context, tigerBeetleID *big.Int, filt
 	accountID := tb.BigIntToUint128(tigerBeetleID)
 	out := make([]domain.Transaction, 0, len(transfers))
 	for _, t := range transfers {
+		// Los asientos técnicos de la siembra no son operaciones que la
+		// persona haya hecho: se ocultan del historial.
+		if domain.IsSeedAdjustment(t.Code) {
+			continue
+		}
+
 		tx, err := transactionFromTransfer(t, accountID)
 		if err != nil {
 			return nil, err

@@ -52,6 +52,21 @@ func (t TransactionType) Code() uint16 {
 	}
 }
 
+// SeedAdjustmentCode marca los asientos técnicos de la siembra de datos.
+//
+// Al cargar los datos de prueba hay que financiar las cuentas antes de
+// reproducir su historial, y ajustar el saldo final para que coincida con el
+// archivo. Esos movimientos son un artefacto de la carga, no operaciones que
+// la persona haya hecho, así que se marcan con un código propio para poder
+// excluirlos del historial que ve el usuario.
+const SeedAdjustmentCode uint16 = 900
+
+// IsSeedAdjustment indica si una transferencia es un asiento técnico de la
+// siembra y por lo tanto no debe mostrarse.
+func IsSeedAdjustment(code uint16) bool {
+	return code == SeedAdjustmentCode
+}
+
 // TransactionTypeFromCode reconstruye el tipo desde el código de TigerBeetle.
 func TransactionTypeFromCode(code uint16) TransactionType {
 	switch code {
@@ -133,6 +148,12 @@ type TransferRequest struct {
 	// PendingTimeout es cuánto vive la reserva antes de liberarse sola.
 	// Sólo aplica cuando Pending es true.
 	PendingTimeout time.Duration
+
+	// CodeOverride reemplaza el código derivado del tipo de transacción.
+	//
+	// Lo usa la siembra de datos para marcar sus asientos técnicos y que el
+	// historial pueda excluirlos. Cero significa usar el código del tipo.
+	CodeOverride uint16
 }
 
 // Validate verifica las reglas de negocio de una transferencia.

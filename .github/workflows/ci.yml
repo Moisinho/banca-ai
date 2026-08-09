@@ -1,0 +1,213 @@
+# ==============================================================================
+# Integración continua
+#
+# Corre en cada push y en cada pull request. Verifica tres cosas:
+#   1. Que el backend compile y sus tests pasen
+#   2. Que el frontend compile, tipe bien y sus tests pasen
+#   3. Que las imágenes de Docker se construyan
+#
+# El valor real no es el tilde verde: es que los tests corran en una máquina
+# limpia. "En mi máquina funciona" deja de ser una respuesta posible.
+# ==============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela ejecuciones anteriores de la misma rama: si hay tres pushes
+# seguidos, sólo interesa el resultado del último.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Backend
+  #
+  # Los tests de integración de TigerBeetle se saltean solos si la variable
+  # TIGERBEETLE_ADDRESSES no está definida, así que este job corre sin
+  # infraestructura. Los de integración quedan para el job de abajo.
+  # ----------------------------------------------------------------------------
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Verificar el formato
+        working-directory: apps/api
+        run: |
+          # gofmt no falla por sí solo: hay que comprobar que no imprima nada.
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Estos archivos no están formateados:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Analizar el código
+        working-directory: apps/api
+        run: go vet ./...
+
+      - name: Compilar
+        working-directory: apps/api
+        run: go build ./...
+
+      - name: Correr los tests
+        working-directory: apps/api
+        # -race detecta accesos concurrentes sin sincronizar. En un sistema que
+        # mueve dinero, una condición de carrera es un error de los caros.
+        run: go test -race ./...
+
+  # ----------------------------------------------------------------------------
+  # Tests de integración contra TigerBeetle real
+  #
+  # Se separan del job anterior porque necesitan levantar el motor. Verifican
+  # lo que un doble no puede: el modelo contable de doble entrada.
+  # ----------------------------------------------------------------------------
+  integration:
+    name: Integración (TigerBeetle)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Levantar TigerBeetle
+        run: |
+          # La versión tiene que coincidir con la del cliente Go: el protocolo
+          # cambia entre releases y una desalineación da errores crípticos.
+          docker run -d --name tigerbeetle-init \
+            --security-opt seccomp=unconfined \
+            -v tigerbeetle-data:/data \
+            --entrypoint /bin/sh \
+            ghcr.io/tigerbeetle/tigerbeetle:0.17.9 \
+            -c "./tigerbeetle format --cluster=0 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle"
+
+          docker wait tigerbeetle-init
+
+          docker run -d --name tigerbeetle \
+            --security-opt seccomp=unconfined \
+            --cap-add IPC_LOCK \
+            -v tigerbeetle-data:/data \
+            -p 3000:3000 \
+            ghcr.io/tigerbeetle/tigerbeetle:0.17.9 \
+            start --addresses=0.0.0.0:3000 --development /data/0_0.tigerbeetle
+
+          # Espera a que acepte conexiones antes de correr los tests.
+          for i in $(seq 1 30); do
+            if nc -z localhost 3000; then
+              echo "TigerBeetle está listo"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "TigerBeetle no arrancó a tiempo"
+          docker logs tigerbeetle
+          exit 1
+
+      - name: Correr los tests de integración
+        working-directory: apps/api
+        env:
+          # El cliente de TigerBeetle no resuelve DNS: necesita una IP literal.
+          TIGERBEETLE_ADDRESSES: 127.0.0.1:3000
+        run: go test -run 'Integration|TestCreateAccount|TestDeposito|TestRetiro|TestTransferencia|TestNoSePuede|TestHistorial|TestInvariante' ./internal/adapters/tigerbeetle/...
+
+  # ----------------------------------------------------------------------------
+  # Frontend
+  # ----------------------------------------------------------------------------
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Instalar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Instalar dependencias
+        working-directory: apps/web
+        # --frozen-lockfile falla si el lockfile no coincide con package.json,
+        # en lugar de actualizarlo en silencio.
+        run: pnpm install --frozen-lockfile
+
+      - name: Verificar los tipos
+        working-directory: apps/web
+        run: pnpm typecheck
+
+      - name: Correr los tests
+        working-directory: apps/web
+        run: pnpm test
+
+      - name: Compilar
+        working-directory: apps/web
+        run: pnpm build
+
+  # ----------------------------------------------------------------------------
+  # Imágenes de Docker
+  #
+  # La prueba exige que el sistema levante con `docker compose up`, así que
+  # verificar que las imágenes se construyen es parte de la entrega.
+  # ----------------------------------------------------------------------------
+  docker:
+    name: Imágenes de Docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir la imagen del backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          # Caché entre ejecuciones: sin esto cada build recompila desde cero.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Construir la imagen del frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          build-args: |
+            VITE_API_URL=http://localhost:8080
+            VITE_WS_URL=ws://localhost:8080
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validar la configuración de Docker Compose
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.dev.yml config --quiet

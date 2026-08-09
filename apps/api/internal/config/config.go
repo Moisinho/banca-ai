@@ -123,7 +123,7 @@ func Load() (*Config, error) {
 		Seed: SeedConfig{
 			Enabled:    getEnvBool("SEED_ENABLED", true),
 			UserLimit:  getEnvInt("SEED_USER_LIMIT", 0),
-			BcryptCost: getEnvInt("SEED_BCRYPT_COST", 10),
+			BcryptCost: getEnvInt("SEED_BCRYPT_COST", 6),
 			DataPath:   getEnv("SEED_DATA_PATH", "/app/seed-data.json"),
 		},
 

@@ -23,11 +23,19 @@ import (
 	"github.com/Moisinho/banca-ai/apps/api/internal/config"
 	httpapi "github.com/Moisinho/banca-ai/apps/api/internal/http"
 	"github.com/Moisinho/banca-ai/apps/api/internal/logger"
+	"github.com/Moisinho/banca-ai/apps/api/internal/seed"
 )
 
 // shutdownTimeout es el tiempo que damos a las peticiones en curso para
 // terminar antes de cerrar el servidor a la fuerza.
 const shutdownTimeout = 15 * time.Second
+
+// seedTimeout acota la carga de los datos de prueba.
+//
+// Es más generoso que el contexto de arranque porque cifrar mil contraseñas
+// con bcrypt es intencionalmente lento, y en una máquina cargada puede tardar
+// varios minutos.
+const seedTimeout = 10 * time.Minute
 
 func main() {
 	// Modo healthcheck: lo usa Docker para saber si el contenedor está sano.
@@ -123,6 +131,33 @@ func run() error {
 		log,
 	)
 	chatService := chat.NewService(aiProvider, mcpServer, chatRepo, transactionService, accountService, log)
+
+	// ---------------------------------------------------------------------------
+	// Datos de prueba
+	//
+	// Es idempotente: si la base ya tiene usuarios no hace nada, así que
+	// reiniciar el contenedor no duplica nada.
+	// ---------------------------------------------------------------------------
+	if cfg.Seed.Enabled {
+		seeder := seed.New(userRepo, accountRepo, metadataRepo, ledger, log)
+
+		// Contexto propio, más holgado que el de arranque: cifrar mil
+		// contraseñas y cargar sus movimientos lleva más que conectar con las
+		// bases, y en una máquina cargada bastante más.
+		seedCtx, cancelSeed := context.WithTimeout(context.Background(), seedTimeout)
+		defer cancelSeed()
+
+		if err := seeder.Run(seedCtx, seed.Config{
+			DataPath:   cfg.Seed.DataPath,
+			UserLimit:  cfg.Seed.UserLimit,
+			BcryptCost: cfg.Seed.BcryptCost,
+		}); err != nil {
+			// Un fallo al sembrar no impide arrancar: la aplicación funciona
+			// igual con la base vacía, y así un archivo de datos ausente no
+			// tumba el servicio.
+			log.Error("no se pudieron cargar los datos de prueba", "error", err)
+		}
+	}
 
 	router := httpapi.NewRouter(cfg, log, httpapi.Dependencies{
 		AuthService:        authService,
